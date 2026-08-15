@@ -1,0 +1,8 @@
+state/
+.env
+__pycache__/
+*.pyc
+insider_scan_result.json
+bash.exe.stackdump
+wallet_test.txt
+wallet_test.txt
