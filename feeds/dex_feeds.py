@@ -141,7 +141,7 @@ def fetch_all_dex():
                         break
         time.sleep(0.3)  # polite rate limit
 
-    # 2. Search queries for shitcoin discovery
+    # 2. Search queries for shitcoin discovery (expanded)
     for q in DEX_SEARCH_QUERIES:
         pairs = search_dex(q)
         for p in pairs[:5]:  # top 5 per query
@@ -152,6 +152,23 @@ def fetch_all_dex():
                     all_signals.append(sig)
                     seen_addresses.add(sig["address"])
                     print(f"  [dex] {q}: {sig['symbol']} ${sig['price_usd']:.8f} vol=${sig['vol_24h']:,.0f}")
+        time.sleep(0.3)
+
+    # 3. Aggressive BSC search — BSC has the biggest shitcoin pumps
+    # MarsCoin, 牛来, etc. live here
+    bsc_queries = ["BSC meme", "PancakeSwap", "BNB meme", "BSC pump", "PancakeSwap meme"]
+    for q in bsc_queries:
+        pairs = search_dex(q)
+        for p in pairs[:3]:
+            chain = p.get("chainId", "")
+            if chain != "bsc":
+                continue
+            sig = _pair_to_signal(p)
+            if sig and sig["address"] not in seen_addresses:
+                if sig["vol_24h"] and sig["vol_24h"] > 5000:  # lower threshold for BSC
+                    all_signals.append(sig)
+                    seen_addresses.add(sig["address"])
+                    print(f"  [dex] {q} (BSC): {sig['symbol']} ${sig['price_usd']:.10f} vol=${sig['vol_24h']:,.0f}")
         time.sleep(0.3)
 
     # 3. Trending boosted tokens

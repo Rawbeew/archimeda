@@ -199,6 +199,41 @@ def handle_command(text, chat_id):
         report = format_signals_report(signals)
         return report
 
+    elif cmd == "buy":
+        # Generate Jupiter swap link for a token
+        if not arg:
+            return "Usage: /buy <token_address>\nExample: /buy 8vNd1xWgVgyNfG5idYaTaZG3BViWYg2PGwtqcZr7pump"
+        
+        token_mint = arg.strip()
+        from buy_engine import check_safety, send_buy_alert
+        # Quick check: get token info from Dexscreener
+        from feeds.dex_feeds import fetch_token_pairs
+        pairs = fetch_token_pairs(token_mint, chain=None)
+        if not pairs:
+            return f"Token not found on Dexscreener: {token_mint[:20]}..."
+        
+        pair = pairs[0]
+        token_info = {
+            "mint": token_mint,
+            "symbol": pair.get("baseToken", {}).get("symbol", "?"),
+            "chain": pair.get("chainId", "?"),
+            "price_usd": pair.get("priceUsd", 0),
+            "vol_24h": pair.get("volume", {}).get("h24", 0),
+            "liquidity_usd": pair.get("liquidity", {}).get("usd", 0),
+            "price_change_1h": pair.get("priceChange", {}).get("h1", 0) or pair.get("priceChange", {}).get("h24", 0),
+            "price_change_6h": pair.get("priceChange", {}).get("h6", 0) or 0,
+            "buy_ratio": 0,  # Dexscreener doesn't always have this
+            "buy_24h": pair.get("txns", {}).get("h24", {}).get("buys", 0) or 0,
+            "sell_24h": pair.get("txns", {}).get("h24", {}).get("sells", 0) or 0,
+            "url": pair.get("url", ""),
+        }
+        total = token_info["buy_24h"] + token_info["sell_24h"]
+        token_info["buy_ratio"] = token_info["buy_24h"] / max(total, 1)
+        
+        safety = check_safety(token_mint)
+        alert = send_buy_alert(token_info, safety)
+        return alert
+
     elif cmd in ("price", "pr") and arg:
         symbol = arg.upper().strip()
         if "/" not in symbol:
