@@ -200,3 +200,38 @@ def detect_volume_surge(dex_signal):
         if projected_24h > vol_24h * DEX_VOL_SURGE_MULT:
             return True
     return False
+
+
+# ── Stealth scraper fallback ─────────────────────────────────────────
+# When the Dexscreener API is rate-limited or blocking, use stealth browser.
+def fetch_all_dex_stealth(chains=None, limit_per_chain=10):
+    """Fetch tokens via stealth browser when API fails.
+    
+    This is the undetectable path — uses Playwright with stealth patches.
+    """
+    from feeds.dex_scraper import fetch_dexscreener_tokens
+    
+    if chains is None:
+        chains = ["solana", "base", "bsc", "ethereum", "arbitrum"]
+    
+    all_pairs = []
+    for chain in chains:
+        try:
+            tokens = fetch_dexscreener_tokens(chain)
+            for t in tokens[:limit_per_chain]:
+                all_pairs.append({
+                    "symbol": t["symbol"],
+                    "chain": t["chain"],
+                    "address": "",  # Dexscreener doesn't return address in scraped data
+                    "price": t["price"],
+                    "vol_24h": t["volume_24h"],
+                    "liq": t["liquidity_usd"],
+                    "market_cap": t["market_cap"],
+                    "price_change_24h": t["price_change_24h"],
+                    "price_change_1h": t["price_change_1h"],
+                    "url": t.get("url", f"https://dexscreener.com/{chain}"),
+                })
+        except Exception as e:
+            print(f"  [dex/stealth] {chain} failed: {e}")
+    
+    return all_pairs

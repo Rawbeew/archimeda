@@ -50,6 +50,18 @@ def fetch_trending(chain=None, limit=20):
                 pairs.append(p)
     except:
         pass
+    
+    # Fallback: stealth browser if API fails
+    if not pairs:
+        try:
+            from feeds.dex_feeds import fetch_all_dex_stealth
+            stealth_pairs = fetch_all_dex_stealth([chain] if chain else None, limit_per_chain=limit)
+            for sp in stealth_pairs:
+                if chain is None or sp["chain"] == chain:
+                    pairs.append(sp)
+        except:
+            pass
+    
     return pairs
 
 
