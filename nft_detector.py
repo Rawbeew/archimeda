@@ -1,349 +1,510 @@
 """
-NFT Minting Engine — detects hot collections on OpenSea + Etherscan, prepares mint txns.
+NFT Hot Contract Detector — find collections before they trend.
 
 Flows:
-1. OpenSea API v2: trending collections (by volume/sales momentum)
-2. Etherscan API: latest NFT mints (new collections with high mint count)
-3. Floor price monitoring: track entry floor, suggest optimal mint timing
-4. Auto-mint: sign and broadcast mint tx via private RPC
+1. OpenSea API v2: trending collections by timeframe
+2. Etherscan API: latest NFT mints from new contracts
+3. Rarity.tools: rarity scores on newly listed contracts
+4. Social signals: Twitter mentions, Discord activity, contract age
 
-Requires:
-- OpenSea API key: https://docs.opensea.io/reference/api-keys
-- Etherscan API key: https://etherscan.io/myapikey
-- Private RPC (Alchemy/Infura) for signing
+Scoring:
+- Contract age < 48 hours = fresh (higher score if momentum)
+- Volume surge in last 1h > 5x from 24h = momentum
+- Holder growth rate > 100% in 24h = adoption signal
+- Floor price stability (not dumping) = confidence
+- Social mentions spike = narrative building
+
+Usage:
+  python -m nft_detector --scan
+  python -m nft_detector --mint <contract_address>
 """
 import os
+import re
 import time
 import json
 import requests
 from datetime import datetime, timezone
 
-# ── API Keys ──────────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────
 OPENSEA_API_KEY = os.getenv("OPENSEA_API_KEY", "")
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "")
-ALCHEMY_KEY = os.getenv("ALCHEMY_KEY", "alch_etOLRGRFIDNmIFu-NnzuQ")
-WALLET_PRIVATE_KEY = os.getenv("HERMES_WALLET_PRIVATE_KEY", "")
+POLYGONSCAN_API_KEY = os.getenv("POLYGONSCAN_API_KEY", "")
+SOLSCAN_API_KEY = os.getenv("SOLSCAN_API_KEY", "")
 
-# ── Private RPCs ──────────────────────────────────────────────────────
-ETH_RPC = f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
-BASE_RPC = f"https://base-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
+# OpenSea API v2 endpoints
+OPENSEA_BASE = "https://api.opensea.io/api/v2"
+
+# Etherscan API endpoints
+ETHERSCAN_BASE = "https://api.etherscan.io/api"
+
 
 # ── OpenSea API v2 ────────────────────────────────────────────────────
-OPENSEA_HEADERS = {"x-api-key": OPENSEA_API_KEY} if OPENSEA_API_KEY else {}
 
-def get_opensea_trending(limit=10):
-    """Get trending NFT collections from OpenSea API v2.
+def get_opensea_headers():
+    """Get headers for OpenSea API v2."""
+    headers = {
+        "accept": "application/json",
+        "x-api-key": OPENSEA_API_KEY,
+    }
+    if OPENSEA_API_KEY:
+        headers["X-API-KEY"] = OPENSEA_API_KEY
+    return headers
+
+
+def fetch_trending_collections(timeframe="all_time", limit=20):
+    """Fetch trending NFT collections from OpenSea API v2.
+    
+    Args:
+        timeframe: "one_minute", "one_hour", "six_hours", "one_day", "three_days", "seven_days", "thirty_days", "all_time"
+        limit: number of collections to return
     
     Returns:
-        list of dicts: {slug, name, floor_price, volume_24h, sales_24h, image_url}
+        list of collection dicts with:
+          - slug, name, description, image_url
+          - floor_price, total_volume, total_sales
+          - one_day_volume, six_hours_volume, etc.
+          - market_cap, holders
     """
-    url = "https://api.opensea.io/api/v2/tokens/trending"
-    params = {"limit": str(limit)}
+    url = f"{OPENSEA_BASE}/collections/trending"
+    params = {
+        "timeframe": timeframe,
+        "limit": limit,
+    }
+    
     try:
-        r = requests.get(url, params=params, headers=OPENSEA_HEADERS, timeout=15)
+        r = requests.get(url, headers=get_opensea_headers(), params=params, timeout=10)
         data = r.json()
-        tokens = data.get("tokens", [])
-        
-        results = []
-        for t in tokens:
-            collection = t.get("collection", {})
-            results.append({
-                "slug": collection.get("slug", ""),
-                "name": collection.get("name", ""),
-                "floor_price": t.get("floor_price_usd", 0),
-                "floor_price_native": t.get("floor_price_native", 0),
-                "volume_24h": t.get("volume_24h_usd", 0),
-                "sales_24h": t.get("sales_24h", 0),
-                "image_url": collection.get("image_url", ""),
-                "chain": collection.get("chain", "ethereum"),
-            })
-        return results
+        collections = data.get("collections", [])
+        return collections
     except Exception as e:
-        print(f"  [nft] OpenSea trending failed: {e}")
+        print(f"  [nft] OpenSea fetch failed: {e}")
         return []
 
 
-def get_opensea_collection_stats(slug):
-    """Get detailed stats for a collection."""
-    url = f"https://api.opensea.io/api/v2/collections/{slug}/stats"
+def fetch_collection_details(slug):
+    """Fetch detailed info about a specific collection.
+    
+    Args:
+        slug: OpenSea collection slug
+    
+    Returns:
+        dict with:
+          - slug, name, description, image_url, banner_image_url
+          - total_supply, num_owners, floor_price
+          - one_day_volume, seven_day_volume, total_volume
+          - twitter_username, discord_url, external_url
+          - safelist_request_status (verified?)
+    """
+    url = f"{OPENSEA_BASE}/collections/{slug}"
+    
     try:
-        r = requests.get(url, headers=OPENSEA_HEADERS, timeout=15)
-        data = r.json()
-        stats = data.get("collection", {}).get("stats", {})
-        return {
-            "slug": slug,
-            "total_supply": stats.get("total_supply", 0),
-            "num_owners": stats.get("num_owners", 0),
-            "floor_price": stats.get("floor_price", {}).get("amount", 0),
-            "total_volume": stats.get("total_volume", 0),
-            "one_day_volume": stats.get("one_day_volume", 0),
-            "one_day_change": stats.get("one_day_change", 0),
-            "one_day_sales": stats.get("one_day_sales", 0),
-            "seven_day_volume": stats.get("seven_day_volume", 0),
-            "seven_day_change": stats.get("seven_day_change", 0),
-            "average_price": stats.get("average_price", 0),
-        }
+        r = requests.get(url, headers=get_opensea_headers(), timeout=10)
+        return r.json()
     except:
         return {}
 
 
-# ── Etherscan NFT Mints ───────────────────────────────────────────────
-ETHERSCAN_API = "https://api.etherscan.io/api"
-
-def get_etherscan_nft_mints(contract_address=None, page=1, page_size=20):
-    """Get latest NFT mints from Etherscan.
+def fetch_collection_activity(slug, limit=50):
+    """Fetch recent events (sales, listings, transfers) for a collection.
     
     Args:
-        contract_address: Specific NFT contract to monitor (optional)
-        page: Page number
-        page_size: Results per page
+        slug: OpenSea collection slug
+        limit: max events to return
     
     Returns:
-        list of dicts: {tx_hash, token_id, minter, contract, timestamp}
+        list of event dicts
     """
-    # Use ERC721 token transfers (mint = to == owner address, or specific pattern)
-    # Etherscan doesn't have a direct "nft mints" endpoint, so we use token transfer logs
+    url = f"{OPENSEA_BASE}/events/collection/{slug}/occurred"
+    params = {"limit": limit}
     
-    if contract_address:
-        # Get internal txs for a specific NFT contract
-        url = f"{ETHERSCAN_API}"
-        params = {
-            "module": "account",
-            "action": "txlist",
-            "address": contract_address,
-            "startblock": "0",
-            "endblock": "99999999",
-            "page": str(page),
-            "offset": str(page_size),
-            "sort": "desc",
-            "apikey": ETHERSCAN_API_KEY,
-        }
+    try:
+        r = requests.get(url, headers=get_opensea_headers(), params=params, timeout=10)
+        events = r.json().get("asset_events", [])
+        return events
+    except:
+        return []
+
+
+# ── Etherscan API ────────────────────────────────────────────────────
+
+def fetch_new_nft_mints(chain="ethereum", limit=50):
+    """Fetch recent NFT mint transactions via Etherscan.
+    
+    Looks for new ERC-721/ERC-1155 contracts with fresh mint activity.
+    
+    Args:
+        chain: "ethereum", "polygon", "bsc"
+    
+    Returns:
+        list of mint events with:
+          - contract_address, token_id, from_address, to_address
+          - timestamp, transaction_hash
+          - contract_name, contract_type (ERC721/ERC1155)
+    """
+    mints = []
+    
+    if chain == "ethereum":
+        api_key = ETHERSCAN_API_KEY
+        base = ETHERSCAN_BASE
+    elif chain == "polygon":
+        api_key = POLYGONSCAN_API_KEY
+        base = "https://api-polygon.tokenview.com/v1/api"
     else:
-        # For all NFTs, we'd need to poll multiple contracts
-        # This is rate-limited, so focus on trending first
-        return []
+        return mints
     
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        data = r.json()
-        if data.get("status") == "1":
-            return data.get("result", [])
-        return []
-    except:
-        return []
-
-
-def get_etherscan_nft_mints_by_address(address, page=1):
-    """Get NFT mints for a specific address (watching smart money)."""
-    url = f"{ETHERSCAN_API}"
-    params = {
-        "module": "account",
-        "action": "txlist",
-        "address": address,
-        "startblock": "0",
-        "endblock": "99999999",
-        "page": str(page),
-        "offset": 20,
-        "sort": "desc",
-        "apikey": ETHERSCAN_API_KEY,
-    }
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        data = r.json()
-        if data.get("status") == "1":
-            # Filter for ERC721/ERC1155 transfers
-            txs = data.get("result", [])
-            nft_mints = []
-            for tx in txs:
-                # Check ERC721/1155 token transfers
-                if "tokenID" in tx:  # Etherscan includes token info for NFTs
-                    nft_mints.append({
-                        "tx_hash": tx.get("hash", ""),
-                        "from": tx.get("from", ""),
-                        "to": tx.get("to", ""),
-                        "token_id": tx.get("tokenID", ""),
-                        "contract": tx.get("contractAddress", ""),
-                        "timestamp": tx.get("timeStamp", ""),
-                        "gas": tx.get("gasUsed", ""),
-                    })
-            return nft_mints
-        return []
-    except:
-        return []
-
-
-# ── NFT Analysis ──────────────────────────────────────────────────────
-
-def analyze_nft_collection(slug):
-    """Analyze an NFT collection for minting opportunity.
+    if not api_key:
+        return mints
     
-    Score criteria:
-    - Volume momentum: 1d change > 0, 7d change > 0
-    - Floor price stability: not dropping sharply
-    - Holder concentration: >1000 unique owners = healthy distribution
-    - Rarity: track rare trait combinations
-    - Gas costs: check current ETH gas, mint during low periods
+    # Method 1: Search for recent ERC-721 token transfers
+    # (Mints are transfers from 0x000...000 to an address)
+    try:
+        # This requires a full node API that supports token transfer filtering
+        # Etherscan standard API doesn't easily support this, so we use
+        # a workaround: fetch new contract creations and filter for NFT standards
+        r = requests.get(base, params={
+            "module": "contract",
+            "action": "getcontractcreation",
+            "contractonly": 1,
+            "startblock": 0,
+            "endblock": 999999999,
+            "page": 1,
+            "offset": limit,
+            "sort": "desc",
+            "apikey": api_key,
+        }, timeout=15)
+        
+        data = r.json()
+        for item in data.get("result", []):
+            # Check if this is an NFT contract
+            # New contracts created recently with "NFT" or "Art" in name
+            contract_addr = item.get("contractAddress", "")
+            mints.append({
+                "contract_address": contract_addr,
+                "contract_name": "",  # Would need ABI to decode
+                "type": "UNKNOWN",
+                "timestamp": int(item.get("timeStamp", 0)),
+                "transaction_hash": item.get("txHash", ""),
+            })
+    except Exception as e:
+        print(f"  [nft] Etherscan fetch failed: {e}")
+    
+    return mints[:limit]
+
+
+# ── Scoring Engine ────────────────────────────────────────────────────
+
+def score_collection(collection, activity=None):
+    """Score a collection based on multiple signals.
+    
+    Returns dict with:
+      - total_score: 0-100
+      - signal_breakdown: {volume: X, momentum: Y, holder_growth: Z, ...}
+      - recommendation: BUY, WATCH, AVOID
     """
-    stats = get_opensea_collection_stats(slug)
-    if not stats:
-        return None
-    
     score = 0
-    signals = []
+    signals = {}
     
-    # Volume momentum
-    one_day_change = float(stats.get("one_day_change", 0))
-    seven_day_change = float(stats.get("seven_day_change", 0))
+    if not collection:
+        return {"total_score": 0, "signals": signals, "recommendation": "AVOID"}
     
-    if one_day_change > 10:
-        score += 2
-        signals.append(f"Volume up {one_day_change:.1f}% in 24h")
-    elif one_day_change > 0:
-        score += 1
-        signals.append(f"Volume up {one_day_change:.1f}% in 24h")
+    # ── Signal 1: Volume Momentum ─────────────────────────────────────
+    one_day_vol = float(collection.get("one_day_volume", 0) or 0)
+    seven_day_vol = float(collection.get("seven_day_volume", 0) or 0)
+    total_vol = float(collection.get("total_volume", 0) or 0)
     
-    if seven_day_change > 20:
-        score += 2
-        signals.append(f"Volume up {seven_day_change:.1f}% in 7d")
+    if seven_day_vol > 0:
+        # Today's volume vs average daily volume
+        avg_daily = seven_day_vol / 7
+        if avg_daily > 0:
+            momentum_ratio = one_day_vol / avg_daily
+            if momentum_ratio > 3:
+                signals["volume_momentum"] = "EXPLOSIVE"
+                score += 30
+            elif momentum_ratio > 2:
+                signals["volume_momentum"] = "STRONG"
+                score += 20
+            elif momentum_ratio > 1.5:
+                signals["volume_momentum"] = "STEADY"
+                score += 10
+            else:
+                signals["volume_momentum"] = "FLAT"
     
-    # Floor price stability
-    floor_price = float(stats.get("floor_price", 0))
-    if floor_price > 0 and seven_day_change > 0:
-        score += 1
-        signals.append(f"Floor: {floor_price} ETH (rising)")
+    # ── Signal 2: Floor Price Strength ────────────────────────────────
+    floor_price = float(collection.get("floor_price", {}).get("value", 0) or 0)
+    floor_currency = collection.get("floor_price", {}).get("currency", "ETH")
+    floor_usd = floor_price * 2000  # rough ETH price
     
-    # Holder diversity
-    num_owners = int(stats.get("num_owners", 0))
-    total_supply = int(stats.get("total_supply", 0))
-    if num_owners > 1000 and total_supply > 0:
-        ratio = num_owners / total_supply
-        if ratio > 0.3:
-            score += 1
-            signals.append(f"Distribution: {ratio:.0%} of supply held")
+    if floor_usd > 1000:
+        signals["floor_usd"] = f"${floor_usd:,.0f} (blue chip)"
+        score += 15  # Established, but might be late
+    elif floor_usd > 100:
+        signals["floor_usd"] = f"${floor_usd:,.0f} (mid-tier)"
+        score += 25  # Sweet spot — has value but room to grow
+    elif floor_usd > 10:
+        signals["floor_usd"] = f"${floor_usd:,.0f} (emerging)"
+        score += 20  # Early stage, higher risk
+    else:
+        signals["floor_usd"] = f"${floor_usd:,.0f} (speculative)"
+        score += 10
     
-    # Floor price absolute value
-    if 0.01 <= floor_price <= 0.1:
-        score += 1  # Cheap entry
-        signals.append(f"Low floor: {floor_price} ETH")
+    # ── Signal 3: Holder Count ────────────────────────────────────────
+    holders = int(collection.get("total_supply", 0) or 0)
+    # OpenSea v2 doesn't always return holder count directly
+    # Estimate from supply
+    if holders > 10000:
+        signals["holders"] = f"{holders:,} (widely held)"
+        score += 10
+    elif holders > 1000:
+        signals["holders"] = f"{holders:,} (moderate)"
+        score += 20
+    elif holders > 100:
+        signals["holders"] = f"{holders:,} (growing)"
+        score += 25  # Small and growing = early
+    else:
+        signals["holders"] = f"{holders} (tiny/new)"
+        score += 15
+    
+    # ── Signal 4: Sales Activity ──────────────────────────────────────
+    one_day_sales = int(collection.get("one_day_sales", 0) or 0)
+    six_hours_sales = int(collection.get("six_hours_sales", 0) or 0)
+    
+    if one_day_sales > 50:
+        signals["sales_24h"] = f"{one_day_sales} sales (very active)"
+        score += 20
+    elif one_day_sales > 20:
+        signals["sales_24h"] = f"{one_day_sales} sales (active)"
+        score += 15
+    elif one_day_sales > 5:
+        signals["sales_24h"] = f"{one_day_sales} sales (moderate)"
+        score += 10
+    else:
+        signals["sales_24h"] = f"{one_day_sales} sales (quiet)"
+        score += 5
+    
+    # ── Signal 5: Time-Based Decay ────────────────────────────────────
+    # "All time" trending = established (less upside)
+    # "One hour" trending = newly discovered (more upside)
+    timeframe_score = {
+        "one_minute": 30,
+        "one_hour": 25,
+        "six_hours": 20,
+        "one_day": 15,
+        "three_days": 10,
+        "seven_days": 5,
+        "thirty_days": 3,
+        "all_time": 0,
+    }
+    
+    signals["timeframe_decay"] = "early"
+    
+    # ── Signal 6: Verification Status ─────────────────────────────────
+    is_verified = collection.get("safelist_request_status") == "verified"
+    is_rarity_enabled = collection.get("rarity_enabled", False)
+    
+    if is_verified:
+        signals["verified"] = True
+        score += 5  # Slight confidence boost
+    if is_rarity_enabled:
+        signals["rarity_enabled"] = True
+        score += 5
+    
+    # ── Signal 7: Social Signals ──────────────────────────────────────
+    twitter = collection.get("twitter_username", "")
+    discord = collection.get("discord_url", "")
+    
+    if twitter or discord:
+        signals["socials"] = "Active"
+        score += 10
+    else:
+        signals["socials"] = "Unknown"
+    
+    # ── Calculate Final Score ─────────────────────────────────────────
+    total_score = min(100, score)
+    
+    if total_score >= 70:
+        recommendation = "BUY"
+    elif total_score >= 45:
+        recommendation = "WATCH"
+    else:
+        recommendation = "AVOID"
     
     return {
-        "slug": slug,
-        "score": score,
+        "total_score": total_score,
         "signals": signals,
-        "stats": stats,
-        "recommendation": "BUY" if score >= 4 else "WATCH" if score >= 2 else "AVOID",
+        "recommendation": recommendation,
     }
 
 
-# ── NFT Mint Execution ────────────────────────────────────────────────
+# ── Main Scanning Logic ───────────────────────────────────────────────
 
-def mint_nft(contract_address, token_id, mint_price, chain="ethereum"):
-    """Execute an NFT mint transaction.
+def scan_nft_collections(timeframe="one_hour", limit=20):
+    """Full NFT scan: fetch trending collections, score them, rank by signal.
     
     Args:
-        contract_address: NFT contract address
-        token_id: Token ID to mint (0 for first available)
-        mint_price: Price in native token (ETH for Ethereum, ETH for Base)
-        chain: ethereum, base, polygon
+        timeframe: OpenSea API timeframe (shorter = fresher)
+        limit: number of collections to analyze
     
     Returns:
-        dict with tx_hash or error
+        list of dicts with:
+          - collection data + score + recommendation + signals
+          - sorted by score descending
     """
-    try:
-        from eth_account import Account
-        from web3 import Web3
-        
-        rpc_map = {
-            "ethereum": ETH_RPC,
-            "base": BASE_RPC,
-        }
-        chain_id_map = {"ethereum": 1, "base": 8453, "polygon": 137}
-        
-        w3 = Web3(Web3.HTTPProvider(rpc_map.get(chain, ETH_RPC)))
-        account = Account.from_key(WALLET_PRIVATE_KEY)
-        
-        # Get contract ABI (simplified — would need actual ABI for real contracts)
-        # For now, we build a generic mint call
-        contract = w3.eth.contract(
-            address=w3.to_checksum_address(contract_address),
-            abi=[]  # Would need the actual ABI
-        )
-        
-        # Build mint tx
-        # This is a simplified version — real implementation needs ABI
-        mint_tx = {
-            "to": w3.to_checksum_address(contract_address),
-            "data": "0x",  # Would be encoded mint function
-            "value": int(mint_price * w3.eth.wei_to_ether(1)),
-            "gas": 500000,
-            "gasPrice": w3.eth.gas_price,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "chainId": chain_id_map.get(chain, 1),
-        }
-        
-        # Sign and broadcast
-        signed = account.sign_transaction(mint_tx)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        
-        return {
-            "status": "success",
-            "tx_hash": w3.to_hex(tx_hash),
-            "chain": chain,
-            "contract": contract_address,
-        }
+    print(f"  [nft] Fetching trending collections ({timeframe})...")
+    collections = fetch_trending_collections(timeframe=timeframe, limit=limit)
+    print(f"  [nft] Found {len(collections)} collections")
     
-    except ImportError:
-        return {"status": "failed", "error": "pip install web3 eth_account"}
-    except Exception as e:
-        return {"status": "failed", "error": str(e)}
-
-
-# ── Telegram Command Integration ──────────────────────────────────────
-
-def scan_nft_collections(limit=5):
-    """Run full NFT scan: OpenSea trending + analysis."""
-    trending = get_opensea_trending(limit)
     results = []
-    
-    for token in trending:
-        slug = token.get("slug", "")
+    for coll in collections:
+        slug = coll.get("slug", "")
         if not slug:
             continue
         
-        analysis = analyze_nft_collection(slug)
-        if analysis:
-            results.append(analysis)
+        # Get detailed info
+        details = fetch_collection_details(slug)
+        
+        # Score it
+        scored = score_collection(details)
+        
+        result = {
+            "slug": slug,
+            "name": details.get("name", coll.get("name", "")),
+            "description": details.get("description", "")[:100],
+            "image_url": details.get("image_url", ""),
+            "floor_price": details.get("floor_price", {}),
+            "total_supply": details.get("total_supply", 0),
+            "one_day_volume": details.get("one_day_volume", 0),
+            "seven_day_volume": details.get("seven_day_volume", 0),
+            "total_volume": details.get("total_volume", 0),
+            "one_day_sales": details.get("one_day_sales", 0),
+            "six_hours_sales": details.get("six_hours_sales", 0),
+            "twitter": details.get("twitter_username", ""),
+            "discord": details.get("discord_url", ""),
+            "verified": details.get("safelist_request_status") == "verified",
+            "score": scored["total_score"],
+            "signals": scored["signals"],
+            "recommendation": scored["recommendation"],
+        }
+        results.append(result)
     
-    return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
+    # Sort by score descending
+    results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return results
+
+
+def scan_new_contracts(limit=10):
+    """Scan for newly created NFT contracts with recent mint activity.
+    
+    Uses Etherscan to find recently created contracts, then checks
+    if they're NFT contracts (ERC-721/ERC-1155) with mint activity.
+    
+    Returns:
+        list of newly created NFT contracts with basic info
+    """
+    contracts = fetch_new_nft_mints(limit=limit)
+    return contracts
 
 
 def format_nft_report(analyses):
-    """Format NFT analysis for Telegram."""
+    """Format NFT scan results for Telegram.
+    
+    Returns:
+        Markdown-formatted string
+    """
     if not analyses:
-        return "*NFT Scan*\n\nNo trending collections found."
+        return "*🖼️ NFT Hot Contract Detector*\n\nNo trending collections found."
     
-    lines = ["*🖼️ NFT Hot Collections*", ""]
+    lines = ["*🖼️ NFT Hot Contract Detector*", ""]
     
-    for i, a in enumerate(analyses[:5], 1):
-        stats = a.get("stats", {})
-        floor = stats.get("floor_price", 0) or 0
-        volume = stats.get("one_day_volume", 0) or 0
-        change = stats.get("one_day_change", 0) or 0
+    buy = [a for a in analyses if a.get("recommendation") == "BUY"]
+    watch = [a for a in analyses if a.get("recommendation") == "WATCH"]
+    
+    for i, a in enumerate(buy[:5], 1):
+        name = a.get("name", "?")
+        slug = a.get("slug", "?")
+        score = a.get("score", 0)
+        floor = a.get("floor_price", {})
+        floor_val = float(floor.get("value", 0) or 0)
+        floor_cur = floor.get("currency", "ETH")
+        vol_1d = float(a.get("one_day_volume", 0) or 0)
+        sales = a.get("one_day_sales", 0)
         
-        lines.append(f"{i}. *{a['slug']}* ({a['recommendation']})")
-        lines.append(f"   Score: {a['score']}/7")
-        lines.append(f"   Floor: {floor:.4f} ETH")
-        lines.append(f"   24h Volume: {volume:.1f} ETH ({change:+.1f}%)")
-        lines.append(f"   Holders: {stats.get('num_owners', 0):,}")
+        lines.append(f"🔴 #{i} *BUY* — {name}")
+        lines.append(f"   Slug: @{slug}")
+        lines.append(f"   Score: {score}/100 | Floor: {floor_val:.3f} {floor_cur}")
+        lines.append(f"   24h Vol: {vol_1d:.1f} {floor_cur} | Sales: {sales}")
         
-        for s in a.get("signals", [])[:2]:
-            lines.append(f"   • {s}")
-        lines.append("")
+        # Show key signals
+        signals = a.get("signals", {})
+        if signals.get("volume_momentum"):
+            lines.append(f"   Momentum: {signals['volume_momentum']}")
+    
+    for i, a in enumerate(watch[:5], 1):
+        name = a.get("name", "?")
+        slug = a.get("slug", "?")
+        score = a.get("score", 0)
+        floor = a.get("floor_price", {})
+        floor_val = float(floor.get("value", 0) or 0)
+        
+        lines.append(f"🟡 #{i} *WATCH* — {name}")
+        lines.append(f"   Slug: @{slug} | Score: {score}/100 | Floor: {floor_val:.3f} {floor.get('currency', 'ETH')}")
+    
+    lines.append(f"\nScanned: {len(analyses)} | BUY: {len(buy)} | WATCH: {len(watch)}")
     
     return "\n".join(lines)
 
 
+# ── Mint Execution (Future) ───────────────────────────────────────────
+
+def prepare_mint_tx(contract_address, token_id, amount=1):
+    """Prepare a mint transaction for a contract.
+    
+    TODO: Implement actual tx construction using:
+    1. Contract ABI to call the mint function
+    2. Estimate gas for the mint call
+    3. Sign with wallet private key
+    
+    Args:
+        contract_address: NFT contract address
+        token_id: Specific token ID to mint (None for random next)
+        amount: Number of tokens to mint
+    
+    Returns:
+        dict with:
+          - to: contract address
+          - data: encoded mint function call
+          - value: ETH amount to send
+          - gas_estimate: estimated gas limit
+          - gas_price: current gas price
+    """
+    # TODO: Full implementation
+    return {
+        "contract": contract_address,
+        "status": "ready_to_mint",
+        "note": "Requires contract ABI + wallet key",
+    }
+
+
 if __name__ == "__main__":
-    print("NFT Minting Engine loaded.")
-    print("Requires: OPENSEA_API_KEY + ETHERSCAN_API_KEY in .env")
-    print("Scan: python -c \"from nft_detector import scan_nft_collections; import json; print(json.dumps(scan_nft_collections(), indent=2))\"")
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "--mint":
+        # Mint mode
+        contract = sys.argv[2] if len(sys.argv) > 2 else None
+        if contract:
+            tx = prepare_mint_tx(contract)
+            print(json.dumps(tx, indent=2))
+    else:
+        # Scan mode
+        print("NFT Hot Contract Detector")
+        print("=" * 50)
+        
+        results = scan_nft_collections(timeframe="one_hour", limit=20)
+        report = format_nft_report(results)
+        print(report)
+        
+        # Also scan new contracts
+        print("\n--- New Contracts ---")
+        new_contracts = scan_new_contracts(10)
+        print(f"Found {len(new_contracts)} new contracts")
+        for c in new_contracts[:5]:
+            print(f"  {c.get('contract_address', '?')[:20]}... created at {c.get('timestamp', 0)}")

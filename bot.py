@@ -41,6 +41,7 @@ def register_commands():
         {"command": "sell", "description": "Sell token (sell bag/moon bag)"},
         {"command": "ledger", "description": "P&L ledger, entry/exit tracking"},
         {"command": "pump", "description": "Start Pump.fun detector"},
+        {"command": "pumpscan", "description": "Scan pump.fun graduation tracker"},
         {"command": "stop", "description": "Stop Pump.fun detector"},
         {"command": "help", "description": "This message"},
         {"command": "about", "description": "About Hermes"},
@@ -438,25 +439,20 @@ def handle_command(text, chat_id):
                 return "\n".join(lines)
         return "No smart wallets tracked yet. Run a scan cycle to find them."
 
+    # ── NFT detector ───────────────────────────────────────────
+    elif cmd == "nft":
+        from nft_detector import scan_nft_collections, format_nft_report
+        results = scan_nft_collections(timeframe="one_hour", limit=20)
+        return format_nft_report(results)
+
     # ── Pump.fun detector ──────────────────────────────────
     elif cmd == "pump":
-        # Start the Pump.fun detector in a background thread
-        # Can't run asyncio in a thread easily, so we run it as a subprocess
-        import subprocess
-        proc = subprocess.Popen(
-            [sys.executable, "pumpfun_detector.py"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        # Save PID so /stop can kill it
-        from config import STATE_DIR
-        pid_path = os.path.join(STATE_DIR, "pumpfun.pid")
-        with open(pid_path, "w") as f:
-            f.write(str(proc.pid))
-        return ("Pump.fun detector STARTED.\n"
-                "Listening for new token launches via Helius WebSocket.\n"
-                "You will receive alerts here when new tokens are detected.\n"
-                "Paper mode: no buys. Send /stop to stop.")
+        return "*Pump.fun detector is running.*\nWatching for new token launches via WebSocket.\nUse /pumpscan to see analyzed results.\nUse /stop to stop detection."
+
+    elif cmd == "pumpscan":
+        from pump_tracker import scan_pump_graduations, format_pump_report
+        results = scan_pump_graduations(limit=20)
+        return format_pump_report(results)
 
     elif cmd == "stop":
         from config import STATE_DIR

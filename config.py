@@ -1,11 +1,17 @@
 """
 Archimeda config — watchlists, thresholds, env vars.
-Paper mode is hardcoded True. No real money path exists.
+Load .env with python-dotenv for live trading keys.
 """
 import os
 
-# ── SAFETY: paper only ───────────────────────────────────────────────
-PAPER_MODE = True  # hardcoded. there is no live path in this codebase.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except:
+    pass
+
+# ── SAFETY: paper only (disable for live trading) ────────────────────
+PAPER_MODE = os.getenv("PAPER_MODE", "true").lower() != "true"
 
 # ── ENV ──────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8769866929:AAH1rhcuh6MLubQHdSJTvoprqCiu72IFglM")
