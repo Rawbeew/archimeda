@@ -193,14 +193,11 @@ def handle_command(text, chat_id):
         return "\n".join(lines)
 
     elif cmd in ("dex", "dexback"):
-        # DEX backtest snapshot: scan all DEX tokens, run signals
-        import subprocess
-        result = subprocess.run(
-            [sys.executable, "dex_backtest.py"],
-            capture_output=True, text=True, timeout=90,
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-        )
-        return result.stdout[-4000:] if result.stdout else "DEX backtest failed."
+        # DEX backtest + signal scan using the new shitcoin-optimized signals
+        from dex_signals import scan_all_dex_signals, format_signals_report
+        signals = scan_all_dex_signals()
+        report = format_signals_report(signals)
+        return report
 
     elif cmd in ("price", "pr") and arg:
         symbol = arg.upper().strip()
