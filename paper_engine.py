@@ -100,11 +100,15 @@ def open_paper_position(signal, current_price=None):
     risk_amount = PAPER_STARTING_BALANCE * PAPER_POSITION_SIZE_PCT
     size = risk_amount / entry_price
 
+    # For DEX tokens with very small prices, use the wallet gate info if present
+    chain = signal.get("chain", "CEX")
+    wallet_gate = signal.get("wallet_gate")
+
     position = {
         "id": f"paper_{int(time.time())}_{symbol}",
         "symbol": symbol,
         "source": source,
-        "chain": signal.get("chain", "CEX"),
+        "chain": chain,
         "direction": direction,
         "entry_price": entry_price,
         "size": size,
@@ -117,9 +121,36 @@ def open_paper_position(signal, current_price=None):
                         else entry_price * (1 - PAPER_TAKE_PROFIT_PCT),
     }
 
+    # If this signal passed the wallet gate, save the smart wallets
+    if wallet_gate and wallet_gate.get("smart_wallets"):
+        _save_smart_wallets(wallet_gate["smart_wallets"])
+
     positions.append(position)
     save_positions(positions)
     return position
+
+
+def _save_smart_wallets(smart_wallets):
+    """Persist smart wallets found by the profiler."""
+    import os
+    wallet_path = os.path.join(STATE_DIR, "tracked_wallets.json")
+    existing = []
+    if os.path.exists(wallet_path):
+        try:
+            with open(wallet_path, "r") as f:
+                existing = json.load(f)
+        except:
+            existing = []
+
+    # Deduplicate by wallet address
+    known = set(w["wallet"] for w in existing)
+    for w in smart_wallets:
+        if w["wallet"] not in known:
+            existing.append(w)
+            known.add(w["wallet"])
+
+    with open(wallet_path, "w") as f:
+        json.dump(existing, f, indent=2)
 
 
 def check_exits(positions, price_map):
