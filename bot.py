@@ -435,23 +435,23 @@ def handle_command(text, chat_id):
 
     # ── Wallet tracking ────────────────────────────────────
     elif cmd == "wallets":
-        from config import STATE_DIR
-        import json
-        wallet_path = os.path.join(STATE_DIR, "tracked_wallets.json")
-        if os.path.exists(wallet_path):
-            with open(wallet_path) as f:
-                wallets = json.load(f)
-            if wallets:
-                lines = [f"*Tracked Smart Wallets ({len(wallets)}):*"]
-                for w in wallets[:10]:
-                    lines.append(
-                        f"\n`{w['wallet'][:16]}...`\n"
-                        f"   Score: {w.get('score', '?')} | "
-                        f"Tokens: {w.get('num_unique_tokens', '?')} | "
-                        f"Hit rate: {w.get('hit_rate', '?')}"
-                    )
-                return "\n".join(lines)
-        return "No smart wallets tracked yet. Run a scan cycle to find them."
+        # Scan for smart money from current trending tokens
+        from feeds.dex_feeds import fetch_all_dex
+        from wallet_profiler import find_cross_token_wallets, format_wallet_report
+        
+        pairs = []
+        for chain in ["solana", "base"]:
+            try:
+                pairs.extend(fetch_all_dex(chain)[:30])
+            except:
+                pass
+        
+        if not pairs:
+            return "No pairs found for wallet scan."
+        
+        print(f"  [wallet] Scanning {len(pairs)} pairs for smart money...")
+        wallets = find_cross_token_wallets(pairs, limit=20)
+        return format_wallet_report(wallets)
 
     # ── NFT detector ───────────────────────────────────────────
     elif cmd == "nft":
