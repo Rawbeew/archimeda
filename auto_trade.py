@@ -22,8 +22,8 @@ from datetime import datetime, timezone
 
 from config import STATE_DIR, TELEGRAM_CHAT_ID
 from buy_engine import check_safety
-from trading import buy_spl_token, sell_spl_token, SOL_MINT, check_token_price
 from llm_reasoner import should_buy
+from exchange import swap_any, auto_sell, WALLET_PRIVATE_KEY
 
 AUTO_TRADE_ENABLED = os.getenv("HERMES_AUTO_TRADE", "true").lower() == "true"
 WALLET_PRIVATE_KEY = os.getenv("HERMES_WALLET_PRIVATE_KEY", "")
@@ -147,10 +147,11 @@ def auto_buy(signal_data, telegram_chat_id="", bot_token=""):
         print(f"  [autobuy] LLM SKIPPED: {llm_result['reason'][:100]}")
         return
 
-    # Execute buy
-    print(f"  [autobuy] EXECUTING: {TRADE_AMOUNT_SOL} SOL -> {symbol}")
+    # Execute buy — route to correct chain
+    print(f"  [autobuy] EXECUTING: {TRADE_AMOUNT_SOL} SOL -> {symbol} ({chain})")
     try:
-        result = buy_spl_token(mint, TRADE_AMOUNT_SOL)
+        result = swap_any(chain, mint, TRADE_AMOUNT_SOL)
+        
         if result.get("status") != "success":
             print(f"  [autobuy] FAILED: {result.get('error', 'unknown')}")
             return
@@ -233,10 +234,30 @@ def auto_sell_monitor(mint, symbol, entry_sol):
         if mint not in trades:
             print(f"  [autosell] Position closed, stopping monitor")
             return
-
-        current_price = check_token_price(mint)
-        if not current_price or current_price <= 0:
-            continue
+        # Price check via Jupiter/1inch for the token
+        current_price = None
+        try:
+            from exchange import swap_any
+            # Quick check: try to get a 1sol quote to see if token is liquid
+            r = requests.get(
+                "https://quote-api.jup.ag/v6/price?id=" + mint,
+                timeout=10,
+            )
+            pdata = r.json()
+            current_price = float(pdata.get("data", {}).get("price", 0) or 0)
+        except:
+            try:
+                # Try 1inch price for EVM chains
+                r = requests.get(
+                    f"https://api.1inch.dev/swap/v6.0/{get_1inch_chain_id(chain)}/price",
+                    params={"tokenIn": NATIVE_TOKENS.get(chain, ""), "tokenOut": mint, "amount": "1000000000000000000"},
+                    headers={"Authorization": f"Bearer {ONEINCH_KEY}"},
+                    timeout=10,
+                )
+                pdata = r.json()
+                current_price = float(pdata.get("tokenOutPrice", 0) or 0)
+            except:
+                pass
 
         entry_price = trades[mint]["entry_price_sol"]
         if entry_price <= 0:
@@ -252,11 +273,10 @@ def auto_sell_monitor(mint, symbol, entry_sol):
         if multiplier >= 2.0 and trades[mint].get("sell_bag_sold") != True:
             print(f"  [autosell] 2x REACHED: selling sell bag (recovers principal)")
             try:
-                # Sell 50% of position
                 token_amount = trades[mint].get("token_amount", 0)
                 if token_amount > 0:
                     sell_amount = token_amount * 0.5
-                    result = sell_spl_token(mint, sell_amount)
+                    result = auto_sell(chain, mint, sell_amount, "token")
                     print(f"  [autosell] SELL BAG SOLD: {result}")
                     trades[mint]["sell_bag_sold"] = True
                     trades[mint]["sell_bag_tx"] = result.get("tx_hash", "")
@@ -284,8 +304,8 @@ def auto_sell_monitor(mint, symbol, entry_sol):
             try:
                 token_amount = trades[mint].get("token_amount", 0)
                 if token_amount > 0:
-                    sell_amount = token_amount * 0.25 * 0.5  # 25% of remaining moon bag
-                    result = sell_spl_token(mint, sell_amount)
+                    sell_amount = token_amount * 0.25 * 0.5
+                    result = auto_sell(chain, mint, sell_amount, "token")
                     print(f"  [autosell] MOON 5x SOLD: {result}")
                     trades[mint]["moon_5x_sold"] = True
                     trades[mint]["moon_5x_tx"] = result.get("tx_hash", "")
@@ -300,7 +320,7 @@ def auto_sell_monitor(mint, symbol, entry_sol):
                 token_amount = trades[mint].get("token_amount", 0)
                 if token_amount > 0:
                     sell_amount = token_amount * 0.25 * 0.5
-                    result = sell_spl_token(mint, sell_amount)
+                    result = auto_sell(chain, mint, sell_amount, "token")
                     print(f"  [autosell] MOON 10x SOLD: {result}")
                     trades[mint]["moon_10x_sold"] = True
                     trades[mint]["moon_10x_tx"] = result.get("tx_hash", "")
@@ -310,14 +330,13 @@ def auto_sell_monitor(mint, symbol, entry_sol):
 
         # ── Trailing Stop: sell 10% of remaining moon bag per 15% drop from peak ──
         if peak_price > 5.0 and multiplier < peak_price * 0.85:
-            # 15% drop from peak
             if not trades[mint].get("trailing_triggered"):
                 print(f"  [autosell] TRAILING STOP: {multiplier:.1f}x vs peak {peak_price:.1f}x")
                 try:
                     token_amount = trades[mint].get("token_amount", 0)
                     if token_amount > 0:
-                        sell_amount = token_amount * 0.10  # sell 10% per trigger
-                        result = sell_spl_token(mint, sell_amount)
+                        sell_amount = token_amount * 0.10
+                        result = auto_sell(chain, mint, sell_amount, "token")
                         print(f"  [autosell] TRAIL SELL: {result}")
                         trades[mint]["trailing_triggered"] = True
                         save_active_trades(trades)
@@ -332,7 +351,7 @@ def auto_sell_monitor(mint, symbol, entry_sol):
             try:
                 token_amount = trades[mint].get("token_amount", 0)
                 if token_amount > 0:
-                    result = sell_spl_token(mint, token_amount)
+                    result = auto_sell(chain, mint, token_amount, "token")
                     print(f"  [autosell] TIME STOP SOLD: {result}")
             except:
                 pass
