@@ -308,6 +308,9 @@ async def watch_pump_fun(duration_sec=None):
                             "url": dex_data["url"],
                             "liq": dex_data.get("liquidity", 0),
                             "mint": mint,
+                            "vol_24h": dex_data.get("vol", 0),
+                            "buy_ratio": dex_data.get("buy_ratio", 0),
+                            "price_change_1h": dex_data.get("price_change_1h", 0),
                         }
                         pos = open_paper_position(signal)
                         if pos:

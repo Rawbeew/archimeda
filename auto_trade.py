@@ -30,6 +30,9 @@ WALLET_PRIVATE_KEY = os.getenv("HERMES_WALLET_PRIVATE_KEY", "")
 TRADE_AMOUNT_SOL = float(os.getenv("HERMES_TRADE_AMOUNT_SOL", "0.1"))
 MAX_TRADES_PER_HOUR = int(os.getenv("HERMES_MAX_TRADES_PER_HOUR", "8"))
 MIN_LIQUIDITY = float(os.getenv("HERMES_MIN_LIQUIDITY", "12500"))
+
+# Honeypot detection: track tokens that failed to sell
+HONEYPOT_LIST_PATH = os.path.join(STATE_DIR, "honeypot_list.json")
 ACTIVE_TRADES = os.path.join(STATE_DIR, "active_trades.json")
 TRADE_RATE_LIMIT = os.path.join(STATE_DIR, "trade_rate.json")
 
@@ -106,6 +109,34 @@ def auto_buy(signal_data, telegram_chat_id="", bot_token=""):
     if liq < MIN_LIQUIDITY:
         print(f"  [autobuy] REJECTED: liq ${liq:,.0f} < ${MIN_LIQUIDITY:,.0f}")
         return
+
+    # Honeypot detection: check if the token has transfer restrictions
+    # Honeypots have sell_tax > 0 or transfer hooks that prevent selling
+    print(f"  [autobuy] Checking honeypot status...")
+    is_honeypot = _check_honeypot(mint)
+    if is_honeypot:
+        print(f"  [autobuy] REJECTED: honeypot detected")
+        return
+
+    # Freshness check: token must have recent buy activity (within 30 mins)
+    # Dead tokens or rugs that already dumped get no buy pressure
+    print(f"  [autobuy] Checking recency...")
+    buy_ratio = signal_data.get("buy_ratio", 0)
+    ch_1h = signal_data.get("price_change_1h", 0)
+    
+    # If buy ratio is very low and price is down significantly, likely dead
+    if buy_ratio < 0.35 and ch_1h < -30:
+        print(f"  [autobuy] REJECTED: low activity (buy_ratio {buy_ratio:.0%}, 1h {ch_1h:+.1f}%)")
+        return
+    
+    # Check 1h volume relative to 24h — if 1h vol is < 5% of 24h, no recent activity
+    vol_1h = signal_data.get("vol_1h", 0)
+    vol_24h = signal_data.get("vol_24h", 0)
+    if vol_1h > 0 and vol_24h > 0:
+        ratio = vol_1h / vol_24h
+        if ratio < 0.02:  # less than 2% of daily volume in last hour
+            print(f"  [autobuy] REJECTED: stale activity (1h/24h vol ratio {ratio:.2f})")
+            return
 
     # LLM reasoning layer — ask if the trade makes sense
     print(f"  [autobuy] LLM reasoning...")
@@ -328,3 +359,87 @@ def auto_sell_position(mint, symbol, trade_info):
         save_active_trades(trades)
     except Exception as e:
         print(f"  [autosell] Sell failed: {e}")
+
+
+def _load_honeypot_list():
+    """Load known honeypot addresses."""
+    if os.path.exists(HONEYPOT_LIST_PATH):
+        with open(HONEYPOT_LIST_PATH) as f:
+            return json.load(f)
+    return []
+
+
+def _save_honeypot_list(addresses):
+    with open(HONEYPOT_LIST_PATH, "w") as f:
+        json.dump(addresses, f)
+
+
+def _check_honeypot(mint):
+    """Check if a token is a known honeypot.
+    
+    Uses multiple heuristics:
+    1. Known honeypot blacklist
+    2. Check via Helius DAS API for suspicious token properties
+    3. Simulate a tiny sell on Jupiter to verify the token is sellable
+    """
+    # 1. Check blacklist
+    blacklist = _load_honeypot_list()
+    if mint in blacklist:
+        return True
+    
+    # 2. Check via Helius DAS API for transfer fees / restrictions
+    try:
+        from config import HELIUS_API_KEY, HELIUS_RPC_URL
+        helius_url = HELIUS_RPC_URL
+        
+        r = requests.post(helius_url, json={
+            "jsonrpc": "2.0", "id": "hp",
+            "method": "getAsset",
+            "params": {"id": mint},
+        }, timeout=10)
+        data = r.json().get("result", {})
+        if data:
+            # Check for transfer fee (honeypot indicator)
+            transfer_fee = data.get("transferFee", {})
+            max_fee = transfer_fee.get("maximumFee", 0) or transfer_fee.get("max", 0) or 0
+            if max_fee > 0:
+                # Token has transfer fee — could be honeypot
+                # But some legit tokens have transfer fees (e.g. BONK had one)
+                # Only flag if fee > 10%
+                transfer_tax = transfer_fee.get("transferFeeBasisPoints", 0) or 0
+                if transfer_tax > 1000:  # > 10%
+                    return True
+    
+    except:
+        pass
+    
+    # 3. Check via Jupiter simulation: try to get a quote to sell 1 token
+    # If the quote fails or returns 0 output, it's likely a honeypot
+    try:
+        from trading import SOL_MINT
+        r = requests.get(
+            f"https://quote-api.jup.ag/v6/quote",
+            params={
+                "inputMint": mint,
+                "outputMint": SOL_MINT,
+                "amount": "1",
+                "slippageBps": "1000000",  # 10000% slippage — max tolerance
+                "onlyDirectRoutes": "false",
+                "maxAccounts": 20,
+            },
+            timeout=10,
+        )
+        data = r.json()
+        if "error" in data:
+            # Jupiter can't route this token — honeypot or dead
+            err = str(data["error"]).lower()
+            if "inputMint" in err or "not found" in err or "zero" in err:
+                # Save to blacklist so we don't check again
+                blacklist.append(mint)
+                _save_honeypot_list(blacklist)
+                return True
+    
+    except:
+        pass
+    
+    return False

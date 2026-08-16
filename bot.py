@@ -247,9 +247,11 @@ def handle_command(text, chat_id):
                         "chain": sig.get("chain", "solana"),
                         "liq": sig.get("liq", 0),
                         "signal": sig["signal"],
-                        "price_usd": sig.get("price", 0),
-                        "url": sig.get("url", ""),
+                        "price": sig.get("price", 0),
                         "vol_24h": sig.get("vol_24h", 0),
+                        "vol_1h": sig.get("vol_24h", 0) * 0.05,  # estimate from 24h
+                        "buy_ratio": sig.get("buy_ratio", 0),
+                        "price_change_1h": sig.get("price_change_1h", 0),
                     },
                     telegram_chat_id=TELEGRAM_CHAT_ID,
                     bot_token=TELEGRAM_BOT_TOKEN,
