@@ -80,9 +80,13 @@ def analyze_token(pair):
     total = buys + sells
     buy_ratio = buys / max(total, 1)
     
-    # Hard filters
-    if liq < 5000:
-        return signals
+    # Hard filters — REJECT tokens already at 300k+ liq (no upside)
+    # We want tokens in the 25k-200k range — early enough for 10-100x
+    if liq < 25000:
+        return signals  # too early / risky
+    if liq > 200000:
+        return signals  # already pumped, no upside
+    
     if vol_1h < 2000:
         return signals
     if symbol.upper() in ("USDT", "USDC", "BUSD", "DAI", "USD1", "SOL", "WETH", "ETH", "BNB"):
@@ -204,7 +208,7 @@ def scan_all_chains():
 
 def format_report(signals):
     if not signals:
-        return "*Multi-Chain Scan*\n\nNo signals this scan.\nFilters: liq >$5k, vol >$2k/h"
+        return "*Multi-Chain Scan*\n\nNo signals this scan.\nFilters: liq $25k-$200k, vol >$2k/h\n(Rejecting >$200k liq — no upside. Rejecting <$25k — too risky.)"
     
     lines = ["*Multi-Chain Scan*", f"{len(signals)} signals\n"]
     
