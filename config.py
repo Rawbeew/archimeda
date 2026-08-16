@@ -112,7 +112,17 @@ SMART_WALLET_MIN_BUYERS = 3         # at least 3 unique buyers found
 SMART_WALLET_MIN_SMART_RATIO = 0.25 # 25%+ of profiled buyers are smart wallets
 
 # Funding tracer: insider if they funded this many wallets
-SMART_WALLET_MIN_FUNDING_TRANSFERS = 3  # funded 3+ wallets = insider (lowered for small samples)
+SMART_WALLET_MIN_FUNDING_TRANSFERS = 3  # funded 3+ wallets = insider
+
+# ── AUTO-TRADE (disabled by default) ─────────────────────────────────
+# Set HERMES_AUTO_TRADE=true to enable
+# Set HERMES_WALLET_PRIVATE_KEY to your cold wallet (B58 encoded)
+# Set HERMES_TRADE_AMOUNT_SOL to SOL per trade (default 0.1)
+# Set HERMES_MAX_TRADES_PER_HOUR to rate limit (default 5)
+AUTO_TRADE_ENABLED = os.getenv("HERMES_AUTO_TRADE", "false").lower() == "true"
+HERMES_WALLET_PRIVATE_KEY = os.getenv("HERMES_WALLET_PRIVATE_KEY", "")
+HERMES_TRADE_AMOUNT_SOL = float(os.getenv("HERMES_TRADE_AMOUNT_SOL", "0.1"))
+HERMES_MAX_TRADES_PER_HOUR = int(os.getenv("HERMES_MAX_TRADES_PER_HOUR", "5"))
 
 # ── STATE PATHS ──────────────────────────────────────────────────────
 STATE_DIR = os.path.join(os.path.dirname(__file__), "state")

@@ -111,6 +111,14 @@ def run_cycle():
                   f"@ ${pos['entry_price']:.6f} ({pos['signal_type']})")
             send_alert(format_paper_trade(pos))
 
+        # Auto-trade if enabled (DEX signals with sufficient liq)
+        from auto_trade import auto_buy
+        auto_buy(
+            signal,
+            telegram_chat_id=TELEGRAM_CHAT_ID,
+            bot_token=TELEGRAM_BOT_TOKEN,
+        )
+
     # ── Alert new signals ─────────────────────────────────────
     if all_signals:
         print(f"\n⚡ {len(all_signals)} signals detected:")

@@ -12,8 +12,7 @@ import threading
 import requests
 
 from config import (
-    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-    PAPER_MODE, SCAN_INTERVAL_SEC,
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, AUTO_TRADE_ENABLED, PAPER_MODE, SCAN_INTERVAL_SEC,
 )
 from paper_engine import get_summary, load_positions, load_trade_log
 from feeds.dex_feeds import search_dex, get_trending_boosted, fetch_token_pairs
@@ -198,6 +197,26 @@ def handle_command(text, chat_id):
         signals = scan_all_dex_signals()
         report = format_signals_report(signals)
         return report
+
+    # Auto-buy on H-priority DEX signals
+    if cmd in ("dex", "dexback") and AUTO_TRADE_ENABLED:
+        for sig in signals:
+            if sig["priority"] == "H" and sig.get("address"):
+                from auto_trade import auto_buy
+                auto_buy(
+                    {
+                        "mint": sig.get("address", ""),
+                        "symbol": sig.get("symbol", "unknown"),
+                        "chain": sig.get("chain", "solana"),
+                        "liq": sig.get("liq", 0),
+                        "signal": sig["signal"],
+                        "price_usd": sig.get("price", 0),
+                        "url": sig.get("url", ""),
+                        "vol_24h": sig.get("vol_24h", 0),
+                    },
+                    telegram_chat_id=TELEGRAM_CHAT_ID,
+                    bot_token=TELEGRAM_BOT_TOKEN,
+                )
 
     elif cmd == "buy":
         # Generate Jupiter swap link for a token with custom amount

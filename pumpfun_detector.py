@@ -306,10 +306,21 @@ async def watch_pump_fun(duration_sec=None):
                             "signal": "PUMP_FUN_NEW_LISTING",
                             "price_usd": dex_data["price"],
                             "url": dex_data["url"],
+                            "liq": dex_data.get("liquidity", 0),
+                            "mint": mint,
                         }
                         pos = open_paper_position(signal)
                         if pos:
                             print(f"    PAPER OPEN: {pos['symbol']} @ ${pos['entry_price']:.10f}")
+
+                    # Auto-trade if enabled
+                    from auto_trade import auto_buy
+                    auto_buy(
+                        {"mint": mint, "symbol": dex_data.get("symbol", "unknown") if dex_data else "pump",
+                         "chain": "solana", "liq": dex_data.get("liquidity", 0) if dex_data else 0},
+                        telegram_chat_id=TELEGRAM_CHAT_ID,
+                        bot_token=TELEGRAM_BOT_TOKEN,
+                    )
 
                 except Exception as e:
                     print(f"  Error processing message: {e}")
