@@ -239,20 +239,61 @@ def calculate_sell_schedule(entry_price, current_price, initial_sol=0.1):
     return result
 
 
-def format_sell_schedule(schedule):
-    """Format sell schedule for Telegram."""
-    if not schedule.get("recommendations"):
-        return None
+def format_sell_schedule(trade_idx, ledger):
+    """Format sell schedule for a trade by index."""
+    trade = ledger.trades[trade_idx] if 0 <= trade_idx < len(ledger.trades) else None
+    if not trade or trade.get("closed"):
+        return f"No open position at index {trade_idx}"
     
-    lines = [f"*🎯 Exit Strategy — {schedule['multiplier']}x multiplier*\n"]
-    lines.append(f"Entry: {schedule['entry_price']:.6f} SOL → Current: {schedule['current_price']:.6f} SOL\n")
+    entry_price = trade.get("entry_price_sol", 0)
+    if not entry_price:
+        return f"No entry price recorded for {trade.get('symbol', '?')}"
     
-    for rec in schedule["recommendations"]:
-        bucket = rec["bucket"]
-        emoji = "💰" if bucket == "sell_bag" else "🌙"
-        lines.append(f"{emoji} *{rec['bucket'].upper()}*: {rec['action']}\n")
-        lines.append(f"  {rec['reason']}\n")
-        lines.append(f"  SOL to receive: {rec['sol_to_receive']:.4f}\n")
+    # Recalculate schedule from trade data
+    from trading import check_token_price
+    current_price = check_token_price(trade.get("mint", ""))
+    if not current_price:
+        return f"Could not get price for {trade.get('symbol', '?')}"
+    
+    return format_sell_schedule_for_trade(trade, entry_price, current_price)
+
+
+def format_sell_schedule_for_trade(trade, entry_price, current_price):
+    """Format sell schedule for a trade dict."""
+    multiplier = current_price / entry_price if entry_price > 0 else 0
+    
+    lines = [f"*🎯 Exit Strategy — {multiplier:.1f}x multiplier*"]
+    lines.append(f"Entry: {entry_price:.6f} SOL → Current: {current_price:.6f} SOL")
+    
+    # Sell bag analysis
+    if multiplier >= 2.0:
+        entry_sol = trade.get("entry_sol", 0)
+        lines.append(f"  💰 SELL BAG: 2x reached — sell 50% to recover {entry_sol:.3f} SOL principal")
+    else:
+        lines.append(f"  💰 SELL BAG: needs {2.0/multiplier:.1f}x more to recover principal")
+    
+    # Moon bag analysis
+    if multiplier >= 5.0:
+        lines.append(f"  🌙 MOON BAG: 5x reached — sell 25% of remaining")
+    elif multiplier >= 2.0:
+        lines.append(f"  🌙 MOON BAG: {5.0/multiplier:.1f}x more to 5x trigger")
+    
+    if multiplier >= 10.0:
+        lines.append(f"  🌙 MOON BAG: 10x reached — sell 25% more")
+    elif multiplier >= 5.0:
+        lines.append(f"  🌙 MOON BAG: {10.0/multiplier:.1f}x more to 10x trigger")
+    
+    if multiplier >= 1.5:
+        lines.append(f"  📊 Trailing stop at {multiplier * 0.85:.1f}x (15% drop from peak)")
+    
+    lines.append("")
+    
+    # Remaining position
+    remaining = trade.get("remaining", {"sell_bag": 1.0, "moon_bag": 1.0})
+    lines.append(f"Remaining: sell_bag={remaining.get('sell_bag', 1.0):.0%} moon_bag={remaining.get('moon_bag', 1.0):.0%}")
+    sells = trade.get("sells", [])
+    if sells:
+        lines.append(f"Sells done: {len(sells)}")
     
     return "\n".join(lines)
 

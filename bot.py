@@ -33,6 +33,7 @@ def register_commands():
         {"command": "degen", "description": "Broad scan: pump.fun, raydium, orca"},
         {"command": "multichain", "description": "All chains, liq $12.5k-$200k"},
         {"command": "dex", "description": "DEX signals with safety checks"},
+        {"command": "nft", "description": "Hot NFT collections + mint"},
         {"command": "backtest", "description": "Run backtest (all CEX)"},
         {"command": "price", "description": "Live CEX price + signals"},
         {"command": "wallets", "description": "Tracked smart wallets"},
@@ -331,30 +332,43 @@ def handle_command(text, chat_id):
         ledger = ProfitLedger()
         return ledger.export_summary()
 
+    elif cmd == "nft":
+        from nft_detector import scan_nft_collections, format_nft_report
+        analyses = scan_nft_collections(limit=5)
+        return format_nft_report(analyses)
+
+    elif cmd == "buy":
+        # Generate Jupiter swap link for a token with custom amount
+        if not arg:
+            return "Usage: /buy <token_address> <amount_in_SOL>\nExample: /buy BEdwv9hxufvF9pWGmtqHecUaH7uMY8H5byoYBhM8pump 0.5"
+        
+        parts = arg.strip().split()
+        if len(parts) < 2:
+            return "Usage: /buy <token_address> <amount_in_SOL>\nExample: /buy BEdwv9hxufvF9pWGmtqHecUaH7uMY8H5byoYBhM8pump 0.5"
+        
+        token_mint = parts[0]
+        amount = float(parts[1])
+        
+        return get_swap_url(token_mint, amount)
+
     elif cmd == "sell":
         # Sell token at current price — calculates optimal exit
         if not arg:
             return "Usage: /sell <token_address> [amount] or /sell all\nExamples:\n  /sell BEdwv9hxufvF9pWGmtqHecUaH7uMY8H5byoYBhM8pump\n  /sell all"
         
-        if arg.strip() == "all":
-            from profit_strategy import ProfitLedger
-            ledger = ProfitLedger()
-            lines = ["*Sell All — Position Exit Guide*\n"]
-            for i, trade in enumerate(ledger.trades):
-                if trade.get("closed"):
-                    continue
-                lines.append(f"  *{trade['symbol']}* (idx {i})\n")
-                lines.append(f"  Entry: {trade.get('entry_sol', 0):.3f} SOL\n")
-                lines.append(f"  Entry price: {trade.get('entry_price_sol', 0):.6f} SOL\n")
-                lines.append(f"  Sells done: {len(trade.get('sells', []))}\n")
-                lines.append(f"  Remaining: sell_bag={trade.get('remaining', {}).get('sell_bag', 1.0):.0%} moon_bag={trade.get('remaining', {}).get('moon_bag', 1.0):.0%}\n")
-            return "\n".join(lines)
+        if arg.strip().lower() == "all":
+            return format_sell_all_report()
+        
+        # Single token sell
+        token_addr = arg.strip().split()[0] if " " in arg else arg.strip()
+        amount_str = arg.strip().split()[1] if len(arg.strip().split()) > 1 else ""
+        amount = float(amount_str) if amount_str else None
         
         from profit_strategy import ProfitLedger, calculate_sell_schedule, format_sell_schedule
         from trading import check_token_price
         
         ledger = ProfitLedger()
-        mint = arg.strip()
+        mint = token_addr
         current_price = check_token_price(mint)
         
         if not current_price:
@@ -370,21 +384,17 @@ def handle_command(text, chat_id):
             return f"No open position for {mint[:20]}...\nUse /ledger to see open positions"
         
         trade = ledger.trades[found]
-        entry_price = trade.get("entry_price_sol", 0)
-        entry_sol = trade.get("entry_sol", 0)
         
-        schedule = calculate_sell_schedule(entry_price, current_price, entry_sol)
-        formatted = format_sell_schedule(schedule)
+        if amount:
+            # Specific amount
+            entry_price = trade.get("entry_price_sol", 0)
+            if entry_price > 0:
+                multiplier = current_price / entry_price
+                return f"{trade['symbol']} — {multiplier:.1f}x entry\nSell {amount} tokens"
+            return f"Entry price unknown for {mint[:20]}..."
         
-        if not formatted:
-            multiplier = current_price / entry_price if entry_price > 0 else 0
-            return f"{trade['symbol']}: {multiplier:.1f}x multiplier\nNo exit trigger reached yet.\nCurrent price: ${current_price:.10f}\nEntry: ${entry_price:.10f}"
-        
-        from buy_engine import get_swap_url
-        sell_link = get_swap_url(mint, amount_sol=entry_sol * 0.5, slippage_bps=3000)
-        formatted += f"\n\n[SELL via Jupiter]({sell_link})"
-        
-        return formatted
+        # Show full sell schedule
+        return format_sell_schedule(found, ledger)
 
     elif cmd in ("price", "pr") and arg:
         symbol = arg.upper().strip()
