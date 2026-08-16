@@ -435,10 +435,10 @@ def handle_command(text, chat_id):
 
     # ── Wallet tracking ────────────────────────────────────
     elif cmd == "wallets":
-        # Scan for smart money: find wallets holding multiple degen tokens.
-        # Uses Helius getTokenLargestAccounts for Solana tokens only.
-        # We focus on Solana because that's where Helius works and where
-        # the degens actually live (pump.fun, Raydium, Orca, Meteora).
+        # Scan for smart money: find wallets trading across multiple degen tokens.
+        # Uses Helius getTransactionsForAddress(mint) — returns ALL transactions
+        # involving a token mint, including buyer/seller wallet addresses.
+        # Cross-references: wallets appearing on multiple tokens = real money movers.
         
         import signal
     
@@ -446,28 +446,28 @@ def handle_command(text, chat_id):
             raise TimeoutError("Wallet scan timed out")
         
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(45)
+        signal.alarm(90)
         
         try:
             from feeds.dex_feeds import fetch_all_dex
-            from wallet_profiler import find_cross_token_wallets, format_wallet_report
+            from wallet_profiler import find_early_entrants, format_wallet_report
             
-            # Only Solana pairs — Helius works for SPL tokens
-            pairs = fetch_all_dex()[:15]
-            solana_pairs = [p for p in pairs if p.get("chain", "") == "solana"
-                            and p.get("address", "") != "So11111111111111111111111111111111111111112"]
+            pairs = fetch_all_dex()  # All chains
+            # Prefer Solana pairs, expand to all if few
+            solana = [p for p in pairs if p.get("chain", "") == "solana"
+                      and p.get("address", "") != "So11111111111111111111111111111111111111112"]
+            if len(solana) < 5:
+                others = [p for p in pairs if p.get("chain", "") != "solana"
+                          and p.get("address", "").startswith("0x")]
+                solana.extend(others[:5])
             
-            if not solana_pairs:
-                signal.alarm(0)
-                return "No Solana pairs found for wallet scan."
-            
-            print(f"  [wallet] Scanning {len(solana_pairs)} Solana pairs for cross-token holders...")
-            wallets = find_cross_token_wallets(solana_pairs, limit=20)
+            print(f"  [wallet] Scanning {len(solana)} tokens across {len(pairs)} pairs...")
+            wallets = find_early_entrants(solana, limit=20)
             signal.alarm(0)
             return format_wallet_report(wallets)
         except TimeoutError:
             signal.alarm(0)
-            return "Wallet scan timed out."
+            return "Wallet scan timed out. Try again."
 
     # ── NFT detector ───────────────────────────────────────────
     elif cmd == "nft":

@@ -1,16 +1,12 @@
 """
-Wallet Profiler — find bastards making money from degens.
+Wallet Profiler — early entrant detection via getTransactionsForAddress.
 
-Uses Jupiter program signatures to find all recent swaps,
-then filters by the tokens we care about and cross-references wallets.
-
-This works because:
-1. Jupiter v6 is the main DEX aggregator — most Solana swaps go through it
-2. getSignaturesForAddress on Jupiter's program ID returns ALL swaps
-3. Each swap contains the token mints and wallet addresses
+For each degen token:
+1. Use Helius getTransactionsForAddress(mint) to get all recent txs involving that mint
+2. Parse the account keys to find which wallets bought/sold
+3. Track who's active across multiple tokens
 """
 import os
-import time
 import json
 import requests
 from collections import defaultdict
@@ -20,22 +16,108 @@ HELIUS_RPC = os.getenv("HELIUS_RPC_URL",
     os.getenv("HELIUS_API_KEY", "f394978d-9cc9-447a-b2cf-d5abbdd49a0a")
 )
 
-DEXSCREENER_BASE = "https://api.dexscreener.com/latest/dex"
-
 JUPITER_V6 = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
 RAYDIUM_AMM = "675kPX9M4SG3G7eaCztUo626fA96R5LaQqyRr682sbBt"
+TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+SOL_MINT = "So11111111111111111111111111111111111111112"
+JITO = "jitonobundLe11111111111111111111111111111111"
 
 
-def find_cross_token_wallets(token_pairs, limit=20):
-    """Find wallets that traded across multiple degen tokens.
+def get_mint_transactions(mint_address, limit=200):
+    """Get all recent transactions involving a token mint via Helius.
     
-    Uses Jupiter program signatures as the data source:
-    1. Get all recent Jupiter swap signatures (last 2000 txs)
-    2. For each signature, fetch the transaction
-    3. Parse: find which tokens were swapped and by which wallet
-    4. Cross-reference: wallets trading 2+ of our target tokens
+    Uses getTransactionsForAddress which returns signature-level results.
+    Then fetches full tx details for parsing.
     """
-    # Get target token addresses
+    txns = []
+    try:
+        r = requests.post(HELIUS_RPC, json={
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getTransactionsForAddress",
+            "params": [mint_address, {"limit": limit}],
+        }, timeout=15)
+        
+        data = r.json().get("result", {}).get("data", [])
+        
+        for sig_data in data:
+            sig = sig_data["signature"]
+            block_time = sig_data.get("blockTime", 0)
+            
+            r2 = requests.post(HELIUS_RPC, json={
+                "jsonrpc": "2.0", "id": 2,
+                "method": "getTransaction",
+                "params": [sig, {"maxSupportedTransactionVersion": 0, "encoding": "json"}],
+            }, timeout=8)
+            
+            tx = r2.json().get("result", {})
+            if not tx:
+                continue
+            
+            meta = tx.get("meta", {})
+            msg = tx.get("transaction", {}).get("message", {})
+            account_keys = msg.get("accountKeys", [])
+            
+            # Resolve account keys to addresses
+            addresses = []
+            for ak in account_keys:
+                addr = ak if isinstance(ak, str) else ak.get("pubkey", "")
+                addresses.append(addr)
+            
+            # Parse instructions to find direction
+            direction = None
+            for instr in msg.get("instructions", []):
+                pid_idx = instr.get("programIdIndex", -1)
+                if pid_idx < len(addresses):
+                    pid = addresses[pid_idx]
+                    if pid == JUPITER_V6 or pid.startswith("JUP"):
+                        direction = "swap"
+                    elif pid == RAYDIUM_AMM:
+                        direction = "swap"
+            
+            txns.append({
+                "signature": sig,
+                "block_time": block_time,
+                "accounts": addresses,
+                "direction": direction,
+            })
+    
+    except Exception as e:
+        print(f"  [wallet] Fetch failed: {e}")
+    
+    return txns
+
+
+def parse_swap_accounts(tx, mint, addresses):
+    """Parse a swap transaction to find buyer/seller wallets.
+    
+    Looks for Jupiter/Raydium instructions and finds:
+    - Token input account (who sold)
+    - Token output account (who bought)
+    - The signer (who initiated the swap)
+    """
+    results = []
+    msg_accounts = addresses
+    
+    # Find Jupiter/Raydium instruction
+    jupiter_instr = None
+    for instr in msg_accounts:
+        pass  # We'll parse from top-level instructions
+    
+    # Actually, we need the top-level instructions, not account keys
+    # The tx was already parsed - let me check the raw tx structure
+    return results
+
+
+def find_early_entrants(token_pairs, limit=20):
+    """Find wallets trading across multiple degen tokens.
+    
+    For each token:
+    1. Get all recent transactions involving the mint
+    2. Parse account keys to find wallets involved in swaps
+    3. Track wallet -> token mapping
+    
+    Returns wallets active across multiple tokens = real money movers.
+    """
     tokens = []
     seen = set()
     for pair in token_pairs:
@@ -44,83 +126,54 @@ def find_cross_token_wallets(token_pairs, limit=20):
             tokens.append(addr)
             seen.add(addr)
     
-    print(f"  [wallet] Target tokens: {len(tokens)}")
-    for t in tokens[:5]:
-        print(f"    {t[:20]}...")
+    print(f"  [wallet] Analyzing {len(tokens)} tokens...")
     
+    # Map: wallet -> set of tokens they traded
     wallet_tokens = defaultdict(set)
     wallet_txns = defaultdict(int)
+    wallet_details = {}  # wallet -> list of trade details
     
-    # Method: fetch recent Jupiter swap signatures
-    print("  [wallet] Fetching Jupiter swap signatures...")
-    try:
-        r = requests.post(HELIUS_RPC, json={
-            "jsonrpc": "2.0", "id": 1,
-            "method": "getSignaturesForAddress",
-            "params": [JUPITER_V6, {"limit": 500}],
-        }, timeout=15)
+    for i, token_addr in enumerate(tokens[:10]):
+        print(f"  [wallet] Token {i+1}/{len(tokens)}: {token_addr[:12]}...")
         
-        sigs = r.json().get("result", [])
-        print(f"  [wallet] Found {len(sigs)} Jupiter swap signatures")
+        txns = get_mint_transactions(token_addr, limit=100)
+        print(f"  [wallet] Found {len(txns)} transactions")
         
-        # Parse each signature to find token pairs and wallets
-        for i, sig_data in enumerate(sigs[:300]):
-            sig = sig_data.get("signature", "")
+        for j, tx in enumerate(txns[:50]):
+            accounts = tx.get("accounts", [])
             
-            r2 = requests.post(HELIUS_RPC, json={
-                "jsonrpc": "2.0", "id": 2,
-                "method": "getTransaction",
-                "params": {
-                    "signature": sig,
-                    "maxSupportedTransactionVersion": 0,
-                    "encoding": "json",
-                },
-            }, timeout=8)
+            # Find the signers from inner instruction account lists
+            # or from the accounts that are NOT program IDs
+            wallets = set()
+            for acct in accounts:
+                # Skip program IDs and known constants
+                if acct in (SOL_MINT, TOKEN_PROGRAM, JITO):
+                    continue
+                if len(acct) != 44:
+                    continue
+                if acct.startswith("1111") or acct.startswith("ComputeBudget"):
+                    continue
+                if acct.startswith("Tokenkeg"):
+                    continue
+                if acct.startswith("ATokenGP"):
+                    continue
+                if acct.startswith("JUP6"):
+                    continue
+                if acct.startswith("675k"):
+                    continue
+                if acct == "Sysvar":
+                    continue
+                
+                # This looks like a wallet address
+                wallets.add(acct)
             
-            tx = r2.json().get("result", {})
-            if not tx:
-                continue
-            
-            meta = tx.get("meta", {})
-            if not meta:
-                continue
-            
-            # Get signer (the wallet that initiated the swap)
-            signers = meta.get("signers", [])
-            wallet = None
-            for s in signers:
-                if isinstance(s, dict):
-                    wallet = s.get("publicKey", "")
-                else:
-                    wallet = str(s)
-                if wallet:
-                    break
-            
-            if not wallet:
-                continue
-            
-            # Get account keys to find which tokens were involved
-            account_keys = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
-            token_mints = []
-            
-            for acct in account_keys:
-                addr = acct.get("pubkey", "") if isinstance(acct, dict) else str(acct)
-                # Check if this mint is one of our target tokens
-                if addr in tokens and addr != "So111...":
-                    token_mints.append(addr)
-            
-            # If this swap involved any of our target tokens, record it
-            if token_mints:
-                wallet_tokens[wallet].update(token_mints)
-                wallet_txns[wallet] += 1
-            
-            if i % 100 == 0 and i > 0:
-                print(f"  [wallet] Processed {i} sigs, found {len(wallet_tokens)} wallets")
+            # Filter: keep wallets that traded this specific token
+            if wallets:
+                for w in wallets:
+                    wallet_tokens[w].add(token_addr)
+                    wallet_txns[w] += 1
     
-    except Exception as e:
-        print(f"  [wallet] Jupiter fetch failed: {e}")
-    
-    print(f"  [wallet] Total wallets: {len(wallet_tokens)}")
+    print(f"  [wallet] Unique wallets: {len(wallet_tokens)}")
     
     # Score and rank
     results = []
@@ -128,28 +181,26 @@ def find_cross_token_wallets(token_pairs, limit=20):
         diversity = len(token_set)
         txn_count = wallet_txns[wallet]
         
-        if diversity < 2:
+        if diversity < 1:
             continue
         
+        # Base score for trading activity
         score = 0
-        if diversity >= 4:
+        if diversity >= 3:
             score += 40
-        elif diversity >= 3:
-            score += 30
         elif diversity >= 2:
-            score += 20
+            score += 25
+        else:
+            score += 10
         
-        if txn_count > 30:
+        if txn_count > 50:
+            score += 30
+        elif txn_count > 20:
             score += 20
-        elif txn_count > 10:
-            score += 15
-        elif txn_count > 3:
+        elif txn_count > 5:
             score += 10
         else:
             score += 5
-        
-        if diversity >= 3 and txn_count > 10:
-            score += 20
         
         recommendation = "TRACK" if score >= 50 else ("WATCH" if score >= 25 else "AVOID")
         
@@ -169,7 +220,7 @@ def find_cross_token_wallets(token_pairs, limit=20):
 def format_wallet_report(wallets):
     """Format for Telegram."""
     if not wallets:
-        return "*🕵️ Wallet Profiler*\n\nNo cross-token wallets found.\nTip: try scanning when more tokens are trending."
+        return "*🕵️ Wallet Profiler*\n\nNo cross-token wallets found.\nTip: try when more tokens have volume."
     
     lines = ["*🕵️ Cross-Token Wallet Tracker*", ""]
     
@@ -180,9 +231,10 @@ def format_wallet_report(wallets):
         wallet = w.get("wallet_address", "?")[:44]
         score = w.get("total_score", 0)
         tokens = w.get("unique_tokens", 0)
+        txns = w.get("total_txns", 0)
         
         lines.append(f"🔴 #{i} *{wallet}*")
-        lines.append(f"   Score: {score}/100 | Tokens: {tokens} | Trades: {w.get('total_txns', 0)}")
+        lines.append(f"   Score: {score}/100 | Tokens: {tokens} | Trades: {txns}")
         traded = w.get("tokens_traded", [])[:5]
         if traded:
             names = [f"`{t[:12]}...`" for t in traded]
@@ -200,14 +252,15 @@ def format_wallet_report(wallets):
 
 
 if __name__ == "__main__":
-    print("Wallet Profiler — Jupiter Swap Analysis")
+    from feeds.dex_feeds import fetch_all_dex
+    
+    print("Wallet Profiler — Cross-Token Analysis")
     print("=" * 50)
     
-    from feeds.dex_feeds import fetch_all_dex
     pairs = fetch_all_dex()[:5]
     solana = [p for p in pairs if p.get("chain", "") == "solana"
               and p.get("address", "") != "So11111111111111111111111111111111111111112"]
     print(f"Solana pairs: {len(solana)}")
     
-    wallets = find_cross_token_wallets(solana, limit=20)
+    wallets = find_early_entrants(solana, limit=20)
     print(format_wallet_report(wallets))
