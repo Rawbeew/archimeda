@@ -22,6 +22,35 @@ from telegram_bot import send_alert, format_summary
 
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
+def register_commands():
+    """Register bot commands with Telegram so / shows the list."""
+    cmds = [
+        {"command": "status", "description": "Paper portfolio + P&L"},
+        {"command": "positions", "description": "Open positions"},
+        {"command": "trades", "description": "Trade history"},
+        {"command": "scan", "description": "Search Dexscreener"},
+        {"command": "trending", "description": "Top boosted DEX tokens"},
+        {"command": "degen", "description": "Broad scan: pump.fun, raydium, orca"},
+        {"command": "multichain", "description": "All chains: SOL, Base, BSC, Arb"},
+        {"command": "dex", "description": "DEX signals with safety checks"},
+        {"command": "backtest", "description": "Run backtest (all CEX)"},
+        {"command": "price", "description": "Live CEX price + signals"},
+        {"command": "wallets", "description": "Tracked smart wallets"},
+        {"command": "buy", "description": "Buy token with amount"},
+        {"command": "sell", "description": "Sell token"},
+        {"command": "pump", "description": "Start Pump.fun detector"},
+        {"command": "stop", "description": "Stop Pump.fun detector"},
+        {"command": "help", "description": "This message"},
+        {"command": "about", "description": "About Hermes"},
+    ]
+    try:
+        r = requests.post(f"{TG_API}/setMyCommands", json={"commands": cmds}, timeout=10)
+        print(f"Commands registered: {r.json()}")
+    except Exception as e:
+        print(f"Command registration failed: {e}")
+
+register_commands()
+
 HELP_TEXT = """*Hermes Commands*
 
 *Portfolio:*
@@ -192,13 +221,20 @@ def handle_command(text, chat_id):
         return "\n".join(lines)
 
     elif cmd in ("dex", "dexback"):
-        # DEX backtest + signal scan using the new shitcoin-optimized signals
+        # DEX signals scan (Solana + Base + BSC only)
         from dex_signals import scan_all_dex_signals, format_signals_report
         signals = scan_all_dex_signals()
         report = format_signals_report(signals)
         return report
 
-    # Auto-buy on H-priority DEX signals
+    elif cmd == "multichain":
+        # Full multi-chain scan: Solana, Base, BSC, Robinhood, Arbitrum, Ethereum
+        from multi_chain_scan import scan_all_chains, format_report
+        signals = scan_all_chains()
+        report = format_report(signals)
+        return report
+
+    # Auto-buy on H-priority DEX signals (when enabled)
     if cmd in ("dex", "dexback") and AUTO_TRADE_ENABLED:
         for sig in signals:
             if sig["priority"] == "H" and sig.get("address"):
