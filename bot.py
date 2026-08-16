@@ -200,15 +200,26 @@ def handle_command(text, chat_id):
         return report
 
     elif cmd == "buy":
-        # Generate Jupiter swap link for a token
+        # Generate Jupiter swap link for a token with custom amount
         if not arg:
-            return "Usage: /buy <token_address>\nExample: /buy 8vNd1xWgVgyNfG5idYaTaZG3BViWYg2PGwtqcZr7pump"
+            return "Usage: /buy <token_address> <amount_in_SOL>\nExample: /buy BEdwv9hxufvF9pWGmtqHecUaH7uMY8H5byoYBhM8pump 0.5"
         
-        token_mint = arg.strip()
-        from buy_engine import check_safety, send_buy_alert
-        # Quick check: get token info from Dexscreener
+        parts = arg.strip().split()
+        if len(parts) < 2:
+            return "Usage: /buy <token_address> <amount_in_SOL>\nExample: /buy BEdwv9hxufvF9pWGmtqHecUaH7uMY8H5byoYBhM8pump 0.5"
+        
+        token_mint = parts[0]
+        try:
+            amount_sol = float(parts[1])
+            if amount_sol <= 0 or amount_sol > 10:
+                return "Amount must be between 0.01 and 10 SOL"
+        except ValueError:
+            return f"Invalid amount: {parts[1]}. Use a number like 0.5"
+        
+        slippage_bps = 1000  # 10% default for shitcoins
+        
         from feeds.dex_feeds import fetch_token_pairs
-        pairs = fetch_token_pairs(token_mint, chain=None)
+        pairs = fetch_token_pairs(token_mint, chain_id=None)
         if not pairs:
             return f"Token not found on Dexscreener: {token_mint[:20]}..."
         
@@ -222,7 +233,6 @@ def handle_command(text, chat_id):
             "liquidity_usd": pair.get("liquidity", {}).get("usd", 0),
             "price_change_1h": pair.get("priceChange", {}).get("h1", 0) or pair.get("priceChange", {}).get("h24", 0),
             "price_change_6h": pair.get("priceChange", {}).get("h6", 0) or 0,
-            "buy_ratio": 0,  # Dexscreener doesn't always have this
             "buy_24h": pair.get("txns", {}).get("h24", {}).get("buys", 0) or 0,
             "sell_24h": pair.get("txns", {}).get("h24", {}).get("sells", 0) or 0,
             "url": pair.get("url", ""),
@@ -230,9 +240,33 @@ def handle_command(text, chat_id):
         total = token_info["buy_24h"] + token_info["sell_24h"]
         token_info["buy_ratio"] = token_info["buy_24h"] / max(total, 1)
         
+        from buy_engine import check_safety, send_buy_alert
         safety = check_safety(token_mint)
-        alert = send_buy_alert(token_info, safety)
-        return alert
+        
+        # Custom amount link
+        from buy_engine import get_swap_url
+        buy_link = get_swap_url(token_mint, amount_sol=amount_sol, slippage_bps=slippage_bps)
+        
+        lines = [
+            f"*🎯 BUY — {amount_sol} SOL*",
+            f"`{token_info['symbol']}` ({token_info['chain']})",
+            f"",
+            f"*Price:* ${float(token_info['price_usd']):.10f}".rstrip("0").rstrip("."),
+            f"*24h:* {token_info['price_change_1h']:+.1f}% | *6h:* {token_info['price_change_6h']:+.1f}%",
+            f"*Vol:* ${token_info['vol_24h']:,.0f} | *Liq:* ${token_info['liquidity_usd']:,.0f}",
+            f"*Buy ratio:* {token_info['buy_ratio']:.0%}",
+            f"",
+            f"*Safety Check:*",
+            f"  Mint auth: `{safety['mint_authority']}`",
+            f"  Freeze: `{safety['freeze_authority']}`",
+            f"  Supply: {safety['supply']:,}",
+            f"",
+            f"[BUY {amount_sol} SOL → {token_info['symbol']}]({buy_link})",
+            f"",
+            f"[Dexscreener]({token_info['url']}) | *Swap via Jupiter (your wallet)*",
+        ]
+        
+        return "\n".join(lines)
 
     elif cmd in ("price", "pr") and arg:
         symbol = arg.upper().strip()
