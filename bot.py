@@ -26,23 +26,23 @@ def register_commands():
     """Register bot commands with Telegram so / shows the list."""
     cmds = [
         {"command": "status", "description": "Paper portfolio + P&L"},
-        {"command": "positions", "description": "Open positions"},
-        {"command": "trades", "description": "Trade history"},
+        {"command": "positions", "description": "Open positions detail"},
+        {"command": "trades", "description": "Closed trade history"},
         {"command": "scan", "description": "Search Dexscreener"},
-        {"command": "trending", "description": "Top boosted DEX tokens"},
-        {"command": "degen", "description": "Broad scan: pump.fun, raydium, orca"},
+        {"command": "trending", "description": "Top boosted tokens"},
+        {"command": "degen", "description": "Pump.fun, Raydium, Orca"},
         {"command": "multichain", "description": "All chains, liq $12.5k-$200k"},
-        {"command": "dex", "description": "DEX signals with safety checks"},
-        {"command": "nft", "description": "Hot NFT collections + mint"},
-        {"command": "backtest", "description": "Run backtest (all CEX)"},
-        {"command": "price", "description": "Live CEX price + signals"},
-        {"command": "wallets", "description": "Tracked smart wallets"},
-        {"command": "buy", "description": "Buy token with amount"},
-        {"command": "sell", "description": "Sell token (sell bag/moon bag)"},
-        {"command": "ledger", "description": "P&L ledger, entry/exit tracking"},
-        {"command": "pump", "description": "Start Pump.fun detector"},
-        {"command": "pumpscan", "description": "Scan pump.fun graduation tracker"},
-        {"command": "stop", "description": "Stop Pump.fun detector"},
+        {"command": "dex", "description": "DEX signals, safety checks"},
+        {"command": "nft", "description": "Hot NFT contracts"},
+        {"command": "backtest", "description": "Run backtest 90d"},
+        {"command": "price", "description": "Live price + signals"},
+        {"command": "wallets", "description": "Smart money tracking"},
+        {"command": "buy", "description": "Buy token (amount SOL)"},
+        {"command": "sell", "description": "Sell: sell bag/moon bag"},
+        {"command": "ledger", "description": "P&L entry/exit ledger"},
+        {"command": "pump", "description": "Start pump.fun live scan"},
+        {"command": "pumpscan", "description": "Scan pump.fun graduations"},
+        {"command": "stop", "description": "Stop pump.fun detector"},
         {"command": "help", "description": "This message"},
         {"command": "about", "description": "About Hermes"},
     ]
@@ -54,55 +54,69 @@ def register_commands():
 
 register_commands()
 
-HELP_TEXT = """*Hermes Commands*
+HELP_TEXT = """*Hermes Command Reference*
 
-*Portfolio:*
-/status - Paper portfolio + P&L
-/positions - Open positions detail
-/trades - Closed trade history
+📊 *Portfolio*
+/status — Paper portfolio + P&L
+/positions — Open positions detail
+/trades — Closed trade history
 
-*Scanning:*
-/scan <query> - Search Dexscreener
-/trending - Top boosted DEX tokens (with names)
-/degen - Broad scan: pump.fun, raydium, meteora, orca, base
-/dex - DEX backtest snapshot (scan all DEX, run signals)
-/price <symbol> - Live CEX price + signals
-/wallets - Tracked smart wallets
+🔍 *Scanning*
+/scan <q> — Dexscreener search
+/trending — Top boosted tokens
+/degen — Broad scan: pump.fun, Raydium, Orca
+/dex — DEX signals + safety checks
+/price <sym> — Live price + signals
+/wallets — Smart money tracking
+/multichain — All chains, liq $12.5k-$200k
 
-*Backtesting:*
-/backtest - Run backtest (all CEX symbols, 90 days)
-/backtest BTC - Backtest single symbol
+🖼️ *NFT*
+/nft — Hot NFT contracts scoring
 
-*Pump.fun:*
-/pump - Start Pump.fun live detector (WebSocket)
-/stop - Stop Pump.fun detector
+🧪 *Backtest*
+/backtest — All CEX symbols, 90d
+/backtest BTC — Single symbol
 
-*System:*
-/help - This message
-/about - About Hermes"""
+🎰 *Pump.fun*
+/pump — Start live scanner
+/pumpscan — Scan graduation tracker
+/stop — Stop detector
+
+⚡ *Trading*
+/buy <addr> <amt> — Buy token (SOL)
+/sell <addr> — Sell: sell bag/moon bag
+/ledger — P&L ledger
+
+/help — This message
+/about — About Hermes"""
 
 ABOUT_TEXT = """*Hermes Signal Engine*
 
-Paper mode: ACTIVE
-No real money. No broker. No live trades.
+Paper mode: ACTIVE. No real money.
 
-*Feeds:*
+📡 *Feeds*
 - CEX: OKX (BTC, ETH, SOL, DOGE, AVAX, LINK, XRP)
 - DEX: Dexscreener (Solana, Base, 90+ chains)
-- Pump.fun: Helius WebSocket detector
-- Wallet profiler: Smart money detection
-- Robinhood Chain: Arbitrum L2 support
+- Pump.fun: Helius WebSocket
+- Smart wallet profiler
+- Robinhood Chain: Arbitrum L2
 
-*Signals:*
-- VWAP bands, SFP, engulfing, CVD divergence
-- DEX volume surge, buy/sell pressure, pump/dump
-- Pump.fun new token detection
-- Smart wallet profiling (3+ token, 30%+ hit rate)
+📈 *Signals*
+- CEX: VWAP bands, SFP, engulfing, CVD divergence
+- DEX: Volume surge, buy/sell pressure, pump/dump
+- Pump.fun: real-time token detection
+- Smart money: 3+ token, 30%+ hit rate
 
-*Paper engine:*
+🧠 *Paper Engine*
 - $10,000 starting balance
-- 1% risk per trade, 2% stop, 4% target
-- Max 5 concurrent positions"""
+- 1% risk, 2% stop, 4% target
+- Max 5 concurrent positions
+
+🔒 *Safety*
+- Honeypot detection
+- Mint/auth authority checks
+- Freshness filter (30min)
+- $12.5k min / $200k max liquidity"""
 
 
 def handle_command(text, chat_id):
