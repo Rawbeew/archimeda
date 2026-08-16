@@ -36,9 +36,11 @@ archimeda/
 ├── run_cycle.py       # Main entry: one scan cycle
 ├── state/             # Paper positions + trade log (JSON)
 ├── requirements.txt
-└── .github/
-    └── workflows/
-        └── scan.yml   # 15-minute GitHub Actions cycle
+├── Dockerfile         # Multi-stage build, runtime uses prebuilt venv
+├── .dockerignore      # Keeps state/ and secrets out of image
+└── .github/workflows/
+    ├── scan.yml       # 15-min GitHub Actions cycle (direct, no container)
+    └── container.yml  # Builds GHCR image + runs scan inside container
 ```
 
 ## Run
@@ -46,7 +48,17 @@ archimeda/
 ```bash
 python run_cycle.py          # one scan cycle
 python run_cycle.py --watch  # continuous (every 15 min)
+docker build -t archimeda .  # build container image
+docker run --env-file .env archimeda python run_cycle.py
 ```
+
+## Container (recommended)
+
+`.github/workflows/container.yml` builds the image, publishes to
+`ghcr.io/Rawbeew/archimeda`, then runs the scan cycle in the container.
+This avoids disk pressure on the local Windows VM (the original OOM cause
+of the SSL malloc failures during broad scans). The container image is
+pinned by commit SHA so rollbacks are a tag swap.
 
 ## Telegram
 
