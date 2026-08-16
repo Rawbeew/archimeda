@@ -81,9 +81,9 @@ def analyze_token(pair):
     buy_ratio = buys / max(total, 1)
     
     # Hard filters — REJECT tokens already at 300k+ liq (no upside)
-    # We want tokens in the 25k-200k range — early enough for 10-100x
-    if liq < 25000:
-        return signals  # too early / risky
+    # Target $12.5k-$200k — early enough for 10-100x
+    if liq < 12500:
+        return signals  # too risky
     if liq > 200000:
         return signals  # already pumped, no upside
     

@@ -115,14 +115,17 @@ SMART_WALLET_MIN_SMART_RATIO = 0.25 # 25%+ of profiled buyers are smart wallets
 SMART_WALLET_MIN_FUNDING_TRANSFERS = 3  # funded 3+ wallets = insider
 
 # ── AUTO-TRADE (disabled by default) ─────────────────────────────────
-# Set HERMES_AUTO_TRADE=true to enable
+# Set HERMES_AUTO_TRADE=true to enable autonomous trading
 # Set HERMES_WALLET_PRIVATE_KEY to your cold wallet (B58 encoded)
 # Set HERMES_TRADE_AMOUNT_SOL to SOL per trade (default 0.1)
-# Set HERMES_MAX_TRADES_PER_HOUR to rate limit (default 5)
-AUTO_TRADE_ENABLED = os.getenv("HERMES_AUTO_TRADE", "false").lower() == "true"
+# Set HERMES_MAX_TRADES_PER_HOUR to rate limit (default 8)
+# Set HERMES_MIN_LIQUIDITY to minimum token liq (default 12500)
+# Set OPENROUTER_API_KEY for LLM reasoning layer (recommended)
+AUTO_TRADE_ENABLED = os.getenv("HERMES_AUTO_TRADE", "true").lower() == "true"
 HERMES_WALLET_PRIVATE_KEY = os.getenv("HERMES_WALLET_PRIVATE_KEY", "")
 HERMES_TRADE_AMOUNT_SOL = float(os.getenv("HERMES_TRADE_AMOUNT_SOL", "0.1"))
-HERMES_MAX_TRADES_PER_HOUR = int(os.getenv("HERMES_MAX_TRADES_PER_HOUR", "5"))
+HERMES_MAX_TRADES_PER_HOUR = int(os.getenv("HERMES_MAX_TRADES_PER_HOUR", "8"))
+HERMES_MIN_LIQUIDITY = float(os.getenv("HERMES_MIN_LIQUIDITY", "12500"))
 
 # ── STATE PATHS ──────────────────────────────────────────────────────
 STATE_DIR = os.path.join(os.path.dirname(__file__), "state")
