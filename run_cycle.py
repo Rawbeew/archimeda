@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from config import (
     PAPER_MODE, SCAN_INTERVAL_SEC, PAPER_STARTING_BALANCE,
     CEX_WATCHLIST,
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
 )
 from feeds.cex_feeds import fetch_all_cex
 from feeds.dex_feeds import fetch_all_dex
