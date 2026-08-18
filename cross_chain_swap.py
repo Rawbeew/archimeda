@@ -27,10 +27,10 @@ import requests
 from datetime import datetime
 
 # ── Chain-specific RPC endpoints ─────────────────────────────────────
-HELIUS_RPC = os.getenv("HELIUS_RPC_URL", "https://mainnet.helius-rpc.com/?api-key=" + os.getenv("HELIUS_API_KEY", "f394978d-9cc9-447a-b2cf-d5abbdd49a0a"))
+HELIUS_RPC = os.getenv("HELIUS_RPC_URL", "https://mainnet.helius-rpc.com/?api-key=" + os.getenv("HELIUS_API_KEY", ""))
 
 # Alchemy keys for EVM chains
-ALCHEMY_KEY = os.getenv("ALCHEMY_KEY", "alch_etOLRGRFIDNmIFu-NnzuQ")
+ALCHEMY_KEY = os.getenv("ALCHEMY_KEY", "")
 
 # Chain RPC URLs (private endpoints to avoid mempool front-running)
 CHAIN_RPC = {

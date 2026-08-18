@@ -87,11 +87,15 @@ jobs:
           docker run --rm \
             -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
             -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \
+            -e HELIUS_API_KEY="$HELIUS_API_KEY" \
+            -e ALCHEMY_API_KEY="$ALCHEMY_API_KEY" \
             "$IMAGE" \
             python run_cycle.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
 
       - name: Push state back to repo
         run: |

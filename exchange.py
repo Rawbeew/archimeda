@@ -30,8 +30,8 @@ import requests
 from datetime import datetime
 
 # ── Config ───────────────────────────────────────────────────────────
-HELIUS_RPC = os.getenv("HELIUS_RPC_URL", "https://mainnet.helius-rpc.com/?api-key=" + os.getenv("HELIUS_API_KEY", "f394978d-9cc9-447a-b2cf-d5abbdd49a0a"))
-ALCHEMY_KEY = os.getenv("ALCHEMY_KEY", "alch_etOLRGRFIDNmIFu-NnzuQ")
+HELIUS_RPC = os.getenv("HELIUS_RPC_URL", "https://mainnet.helius-rpc.com/?api-key=" + os.getenv("HELIUS_API_KEY", ""))
+ALCHEMY_KEY = os.getenv("ALCHEMY_KEY", "")
 ONEINCH_KEY = os.getenv("ONEINCH_API_KEY", "")
 WALLET_PRIVATE_KEY = os.getenv("HERMES_WALLET_PRIVATE_KEY", "")
 

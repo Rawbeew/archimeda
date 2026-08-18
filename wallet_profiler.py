@@ -20,8 +20,7 @@ from collections import defaultdict
 
 HELIUS_RPC = os.getenv("HELIUS_RPC_URL",
     "https://mainnet.helius-rpc.com/?api-key=" +
-    os.getenv("HELIUS_API_KEY", "f394978d-9cc9-447a-b2cf-d5abbdd49a0a")
-)
+    os.getenv("HELIUS_API_KEY", ""))
 
 PROGRAM_PREFIXES = [
     "1111", "Tokenkeg", "ComputeBudget", "JUP6", "675kP",

@@ -28,9 +28,9 @@ import requests
 from datetime import datetime, timezone
 
 # ── Config ────────────────────────────────────────────────────────────
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "f394978d-9cc9-447a-b2cf-d5abbdd49a0a")
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "")
 HELIUS_RPC = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8769866929:AAH1rhcuh6MLubQHdSJTvoprqCiu72IFglM")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7058639926")
 
 # Pump.fun constants

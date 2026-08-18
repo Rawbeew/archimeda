@@ -14,19 +14,20 @@ except:
 PAPER_MODE = os.getenv("PAPER_MODE", "true").lower() != "true"
 
 # ── ENV ──────────────────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8769866929:AAH1rhcuh6MLubQHdSJTvoprqCiu72IFglM")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7058639926")
 CEX_EXCHANGE = os.getenv("CEX_EXCHANGE", "okx")  # binance geo-blocks this VPS
 SCAN_INTERVAL_SEC = int(os.getenv("SCAN_INTERVAL_SEC", "900"))  # 15 min
 
 # ── RPC ENDPOINTS ────────────────────────────────────────────────────
 # Helius (Solana) — enhanced APIs, DAS, WebSocket
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "f394978d-9cc9-447a-b2cf-d5abbdd49a0a")
+# IMPORTANT: set via env (CI passes secrets.HELIUS_API_KEY); never commit a real key.
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "")
 SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}")
 SOLANA_WSS_URL = os.getenv("SOLANA_WSS_URL", f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}")
 
 # Alchemy (EVM) — Ethereum + Base
-ALCHEMY_API_KEY = os.getenv("ALCHEMY_API_KEY", "alch_etOLRGRFIDNmIFu-NnzuQ")
+ALCHEMY_API_KEY = os.getenv("ALCHEMY_API_KEY", "")
 ETH_RPC_URL = f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}"
 # Base needs enabling in Alchemy dashboard; use public fallback for now
 BASE_RPC_URL = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
