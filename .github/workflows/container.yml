@@ -82,8 +82,7 @@ jobs:
 
       - name: Run scan in container
         run: |
-          SHORT_SHA="${{ github.sha }}"
-          IMAGE="ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):sha-${SHORT_SHA:0:8}"
+          IMAGE="ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):master"
           echo "Using image: $IMAGE"
           docker run --rm \
             -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
