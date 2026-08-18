@@ -75,10 +75,11 @@ jobs:
     steps:
       - name: Run scan in container
         run: |
+          IMAGE="$(echo "ghcr.io/${{ github.repository }}:sha-${{ github.sha }}" | tr '[:upper:]' '[:lower:]')"
           docker run --rm \
             -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
             -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \
-            "ghcr.io/${{ github.repository }}:sha-${{ github.sha }}" \
+            "$IMAGE" \
             python run_cycle.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
