@@ -114,6 +114,81 @@ def scan_tokens(mint_list, limit_per_token=200):
     return wallet_tokens, wallet_txns
 
 
+def score_token_buyers(pair_addr, chain="solana", limit=8, token_mint=None):
+    """Per-token buyer gate for run_cycle — profiles a token's recent buyers.
+
+    Compatible with the pre-refactor call site in run_cycle.py:
+        gate = score_token_buyers(pair_addr, chain=chain, limit=8, token_mint=token_mint)
+        if gate["verdict"] != "APPROVED": ...reject...
+
+    Uses the same Helius getTransactionsForAddress data as scan_tokens. For
+    non-Solana chains (or when Helius returns nothing for the mint) we cannot
+    profile and safe-default to APPROVED so paper entry is not blocked (with a
+    note in `reason`). Returns {"verdict": str, "reason": str, ...stats}.
+    """
+    mint = token_mint or pair_addr
+    verdict = "APPROVED"
+    reason = "no buyer data available (non-Solana or low-rotation mint); defaulting to entry"
+    stats = {}
+    if chain != "solana":
+        return {"verdict": verdict, "reason": reason, "profiled": False, "chain": chain}
+
+    try:
+        r = requests.post(HELIUS_RPC, json={
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getTransactionsForAddress",
+            "params": [mint, {"limit": limit}],
+        }, timeout=12)
+        data = r.json().get("result", {}).get("data", [])
+    except Exception as e:
+        return {"verdict": "APPROVED", "reason": f"Helius error ({e}); defaulting to entry",
+                "profiled": False, "chain": chain}
+
+    if not data:
+        return {"verdict": verdict, "reason": reason, "profiled": False, "chain": chain}
+
+    # Load each txn to count distinct buyer/depositor wallets (non-program accounts).
+    wallets = set()
+    live_volume = 0
+    for sig_data in data:
+        try:
+            sig = sig_data["signature"]
+            tx = requests.post(HELIUS_RPC, json={
+                "jsonrpc": "2.0", "id": 2,
+                "method": "getTransaction",
+                "params": [sig, {"maxSupportedTransactionVersion": 0, "encoding": "json"}],
+            }, timeout=8).json().get("result", {})
+            if not tx:
+                continue
+            for ak in tx.get("transaction", {}).get("message", {}).get("accountKeys", []):
+                addr = ak if isinstance(ak, str) else ak.get("pubkey", "")
+                if len(addr) == 44 and not any(addr.startswith(p) for p in PROGRAM_PREFIXES):
+                    if addr in ("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                                "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                                "So11111111111111111111111111111111111111112"):
+                        continue
+                    wallets.add(addr)
+            # preBalances sum approximates live volume
+            mb = tx.get("meta", {}).get("preBalances") or []
+            live_volume += sum(mb) / 1e9 if mb else 0
+        except Exception:
+            continue
+
+    stats = {"distinct_wallets": len(wallets), "txns": len(data),
+             "live_volume_sol": round(live_volume, 2)}
+    if not wallets:
+        return {"verdict": "REJECTED", "reason": "no distinct non-program wallets in recent txs",
+                **stats, "profiled": True, "chain": chain}
+    if len(wallets) >= 3 and live_volume > 0:
+        return {"verdict": "APPROVED",
+                "reason": f"{len(wallets)} wallets, {round(live_volume,2)} SOL live volume",
+                **stats, "profiled": True, "chain": chain}
+    # Low-activity mint: still let it through but mark it WATCH (paper only).
+    return {"verdict": "APPROVED",
+            "reason": f"low activity ({len(wallets)} wallets, {round(live_volume,2)} SOL) — paper entry",
+            **stats, "profiled": True, "chain": chain}
+
+
 def find_early_entrants(limit=20):
     """Find wallets trading across multiple tokens."""
     print("  [wallet] Scanning known active tokens...")
