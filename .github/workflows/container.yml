@@ -74,12 +74,15 @@ jobs:
       packages: read
     steps:
       - name: Run scan in container
-        uses: docker://ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+        run: |
+          docker run --rm \
+            -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+            -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \
+            "ghcr.io/${{ github.repository }}:sha-${{ github.sha }}" \
+            python run_cycle.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        with:
-          args: python run_cycle.py
 
       - name: Push state back to repo
         run: |
